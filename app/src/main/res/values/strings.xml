@@ -1,0 +1,9 @@
+<resources>
+    <string name="app_name">光印</string>
+    <style name="Theme.PhotoMark" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">#101115</item>
+        <item name="android:colorAccent">#F4CE82</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+    </style>
+</resources>
