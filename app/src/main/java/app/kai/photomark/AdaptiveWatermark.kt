@@ -3,6 +3,7 @@ package app.kai.photomark
 import android.graphics.Bitmap
 import android.graphics.Color
 import java.util.Locale
+import kotlin.math.pow
 import kotlin.math.roundToInt
 
 private fun colorBins(bitmap: Bitmap): List<Int> {
@@ -47,18 +48,48 @@ internal fun photoPalette(bitmap: Bitmap, count: Int): List<Int> {
     return (distinct + candidates.filterNot(distinct::contains)).take(count)
 }
 
+// Average transmitted light before converting back to sRGB, so a bright waterfall
+// still contributes light to a neighboring dark patch of forest.
+private const val LINEAR_MAX = 16384
+private val linearLight = IntArray(256) { byte ->
+    val value = byte / 255.0
+    val linear = if (value <= .04045) value / 12.92 else ((value + .055) / 1.055).pow(2.4)
+    (linear * LINEAR_MAX).roundToInt()
+}
+private val displayLight = IntArray(LINEAR_MAX + 1) { sample ->
+    val linear = sample.toDouble() / LINEAR_MAX
+    val value = if (linear <= .0031308) 12.92 * linear else 1.055 * linear.pow(1.0 / 2.4) - .055
+    (255 * value).roundToInt()
+}
+
 internal fun blurPhotoSample(sample: Bitmap, strength: Float) {
     val width = sample.width
     val height = sample.height
     val radius = (minOf(width, height) * strength.coerceIn(.02f, .24f)).roundToInt().coerceAtLeast(1)
     val pixels = IntArray(width * height)
-    val temporary = IntArray(pixels.size)
     sample.getPixels(pixels, 0, width, 0, 0, width, height)
-    repeat(3) {
-        blurLines(pixels, temporary, width, height, 1, width, radius)
-        blurLines(temporary, pixels, height, width, width, 1, radius)
+    val channel = IntArray(pixels.size)
+    val scratch = IntArray(pixels.size)
+    val result = IntArray(pixels.size)
+    for (shift in listOf(24, 16, 8, 0)) {
+        for (i in pixels.indices) {
+            val alpha = Color.alpha(pixels[i])
+            val byte = (pixels[i] ushr shift) and 255
+            channel[i] = if (shift == 24) alpha else linearLight[byte] * alpha / 255
+        }
+        repeat(3) {
+            blurLines(channel, scratch, width, height, 1, width, radius)
+            blurLines(scratch, channel, height, width, width, 1, radius)
+        }
+        for (i in result.indices) {
+            val value = if (shift == 24) channel[i] else {
+                val alpha = Color.alpha(result[i]).coerceAtLeast(1)
+                displayLight[(channel[i] * 255 / alpha).coerceIn(0, LINEAR_MAX)]
+            }
+            result[i] = result[i] or (value shl shift)
+        }
     }
-    sample.setPixels(pixels, 0, width, 0, 0, width, height)
+    sample.setPixels(result, 0, width, 0, 0, width, height)
 }
 
 private fun blurLines(
@@ -67,25 +98,13 @@ private fun blurLines(
     val kernel = radius * 2 + 1
     for (line in 0 until lines) {
         val start = line * lineStride
-        var alpha = 0
-        var red = 0
-        var green = 0
-        var blue = 0
-        for (offset in -radius..radius) {
-            val pixel = source[start + offset.coerceIn(0, length - 1) * stride]
-            alpha += Color.alpha(pixel)
-            red += Color.red(pixel)
-            green += Color.green(pixel)
-            blue += Color.blue(pixel)
-        }
+        var sum = 0
+        for (offset in -radius..radius) sum += source[start + offset.coerceIn(0, length - 1) * stride]
         for (i in 0 until length) {
-            output[start + i * stride] = Color.argb(alpha / kernel, red / kernel, green / kernel, blue / kernel)
-            val remove = source[start + (i - radius).coerceIn(0, length - 1) * stride]
-            val add = source[start + (i + radius + 1).coerceIn(0, length - 1) * stride]
-            alpha += Color.alpha(add) - Color.alpha(remove)
-            red += Color.red(add) - Color.red(remove)
-            green += Color.green(add) - Color.green(remove)
-            blue += Color.blue(add) - Color.blue(remove)
+            output[start + i * stride] = (sum + radius) / kernel
+            val leaving = (i - radius).coerceIn(0, length - 1)
+            val entering = (i + radius + 1).coerceIn(0, length - 1)
+            sum += source[start + entering * stride] - source[start + leaving * stride]
         }
     }
 }

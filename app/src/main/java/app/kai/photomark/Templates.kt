@@ -81,8 +81,8 @@ object Templates {
 
     val frostedGallery = WatermarkTemplate(
         "frosted-gallery", "雾面展框",
-        Frame(.072f, .072f, .072f, .30f, "#14202B", hairline = true,
-            background = FrameBackground.FROSTED, blur = .075f, tintStrength = .49f),
+        Frame(.082f, .082f, .082f, .265f, "#273544", hairline = true,
+            background = FrameBackground.FROSTED, blur = .051f, tintStrength = .095f),
         listOf(
             footerLogo(BrandTone.LIGHT, size = .17f, margin = .046f).copy(brandStyle = BrandStyle.WORDMARK),
             annotation("camera", listOf(MetadataField.MODEL, MetadataField.LENS), Anchor.TOP_RIGHT,
@@ -90,13 +90,13 @@ object Templates {
             annotation("exif", exposure, Anchor.CENTER_RIGHT, column = LayerColumn.RIGHT, size = .029f),
             annotation("credit", listOf(MetadataField.AUTHOR, MetadataField.LOCATION), Anchor.BOTTOM_RIGHT,
                 column = LayerColumn.RIGHT, size = .024f, color = "#D5E0E5"),
-        ),
+        ).map { it.copy(autoGlassInk = true) },
     )
 
     val frostedJournal = WatermarkTemplate(
         "frosted-journal", "雾面纪行",
-        Frame(.054f, .15f, .054f, .25f, "#0D2C31",
-            background = FrameBackground.FROSTED, blur = .13f, tintStrength = .61f),
+        Frame(.075f, .12f, .075f, .225f, "#DDE9EC", hairline = true,
+            background = FrameBackground.FROSTED, blur = .032f, tintStrength = .14f),
         listOf(
             WatermarkLayer("brand", LayerKind.BRAND, area = LayerArea.TOP, anchor = Anchor.CENTER_LEFT,
                 size = .17f, margin = .04f, column = LayerColumn.LEFT, brandTone = BrandTone.LIGHT,
@@ -108,7 +108,7 @@ object Templates {
                 size = .025f, color = "#DDE8E7"),
             annotation("author", listOf(MetadataField.AUTHOR), Anchor.BOTTOM_CENTER,
                 size = .027f, type = TypeStyle.SERIF),
-        ),
+        ).map { it.copy(autoGlassInk = true) },
     )
 
     val colorAtlas = WatermarkTemplate(

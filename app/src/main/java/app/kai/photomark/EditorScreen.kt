@@ -427,8 +427,12 @@ private fun LayersPanel(
     SliderRow("边距", layer.margin, 0f.. .3f, { "${(it * 100).roundToInt()}%" }, workspace::finishAdjustment) { workspace.layer(layer.copy(margin = it), live = true) }
     SliderRow("透明度", layer.opacity, 0f..1f, { "${(it * 100).roundToInt()}%" }, workspace::finishAdjustment) { workspace.layer(layer.copy(opacity = it), live = true) }
     SliderRow("旋转", layer.rotation, -180f..180f, { "${it.roundToInt()}°" }, workspace::finishAdjustment) { workspace.layer(layer.copy(rotation = it), live = true) }
+    if (workspace.draft.template.frame.background == FrameBackground.FROSTED && layer.canUseGlassInk &&
+        (layer.kind != LayerKind.BRAND || layer.brand.resolve(metadata, overrides)?.graphic(layer.brandStyle)?.tintable == true)) {
+        Toggle("随雾面明暗换色", layer.autoGlassInk) { workspace.layer(layer.copy(autoGlassInk = it)) }
+    }
     if (layer.kind in listOf(LayerKind.TEXT, LayerKind.EXIF, LayerKind.LINE)) {
-        Palette("水印颜色", layer.color) { workspace.layer(layer.copy(color = it)) }
+        Palette("水印颜色", layer.color) { workspace.layer(layer.copy(color = it, autoGlassInk = false)) }
     }
     if (layer.kind == LayerKind.TEXT || layer.kind == LayerKind.EXIF) {
         ChoiceMenu("字体", layer.type, TypeStyle.entries, { it.label }) {
@@ -607,7 +611,7 @@ private fun BrandControls(
     }
     if (graphic.tintable) {
         ChoiceMenu("标志颜色", layer.brandTone, BrandTone.entries, BrandTone::label) {
-            workspace.layer(layer.copy(brandTone = it))
+            workspace.layer(layer.copy(brandTone = it, autoGlassInk = false))
         }
     }
 }

@@ -4,14 +4,17 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.BitmapRegionDecoder
+import android.graphics.BitmapShader
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Picture
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffColorFilter
 import android.graphics.Rect
 import android.graphics.RectF
+import android.graphics.Shader
 import android.graphics.Typeface
 import android.net.Uri
 import android.text.Layout
@@ -26,8 +29,18 @@ import kotlin.math.ceil
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.roundToInt
+import kotlin.random.Random
 
 class WatermarkRenderer(private val context: Context, private val photos: PhotoRepository) {
+    private val glassGrain by lazy {
+        val random = Random(1841)
+        val side = 96
+        val pixels = IntArray(side * side) {
+            val grain = random.nextInt(-8, 9)
+            if (grain >= 0) Color.argb(grain, 255, 255, 255) else Color.argb(-grain, 0, 0, 0)
+        }
+        Bitmap.createBitmap(pixels, side, side, Bitmap.Config.ARGB_8888)
+    }
     private val fonts = LruCache<String, Typeface>(12)
     private val brands = LruCache<String, BrandArtwork>(32)
     private val logos = object : LruCache<String, Bitmap>(12 * 1024 * 1024) {
@@ -170,7 +183,7 @@ class WatermarkRenderer(private val context: Context, private val photos: PhotoR
         val paletteCount = template.layers.filter { it.kind == LayerKind.PALETTE && it.visible && it.opacity > 0f }
             .maxOfOrNull { it.paletteCount.coerceIn(3, 6) }
         val palette = if (frost || paletteCount != null) {
-            val sample = photoSample(output, layout)
+            val sample = photoSample(output, layout, if (frost) 256 else 112)
             try {
                 val colors = paletteCount?.let { photoPalette(sample, it) }.orEmpty()
                 if (frost) drawFrostedFrame(canvas, layout, template.frame, sample)
@@ -182,17 +195,17 @@ class WatermarkRenderer(private val context: Context, private val photos: PhotoR
         if (template.frame.hairline) drawFrameOutline(canvas, layout)
         val captions = template.captions.filterKeys { it in MetadataField.captionFields }
         val shown = if (captions.isEmpty()) metadata else metadata.copy(values = metadata.values + captions)
-        drawLayers(canvas, layout, template, shown, overrides, palette)
+        drawLayers(canvas, output, layout, template, shown, overrides, palette)
     }
 
-    private fun photoSample(output: Bitmap, layout: WatermarkLayout): Bitmap {
+    private fun photoSample(output: Bitmap, layout: WatermarkLayout, maximumEdge: Int): Bitmap {
         val scaleX = output.width.toFloat() / layout.canvas.width
         val scaleY = output.height.toFloat() / layout.canvas.height
         val left = (layout.photo.left * scaleX).roundToInt().coerceIn(0, output.width - 1)
         val top = (layout.photo.top * scaleY).roundToInt().coerceIn(0, output.height - 1)
         val right = (layout.photo.right * scaleX).roundToInt().coerceIn(left + 1, output.width)
         val bottom = (layout.photo.bottom * scaleY).roundToInt().coerceIn(top + 1, output.height)
-        val size = PixelSize(right - left, bottom - top).fit(112)
+        val size = PixelSize(right - left, bottom - top).fit(maximumEdge)
         return Bitmap.createBitmap(size.width, size.height, Bitmap.Config.ARGB_8888).apply {
             Canvas(this).drawBitmap(output, Rect(left, top, right, bottom),
                 Rect(0, 0, width, height), Paint(Paint.FILTER_BITMAP_FLAG))
@@ -201,17 +214,27 @@ class WatermarkRenderer(private val context: Context, private val photos: PhotoR
 
     private fun drawFrostedFrame(canvas: Canvas, layout: WatermarkLayout, frame: Frame, sample: Bitmap) {
         blurPhotoSample(sample, frame.blur)
-        val scale = max(layout.canvas.width.toFloat() / sample.width, layout.canvas.height.toFloat() / sample.height)
-        val width = sample.width * scale
-        val height = sample.height * scale
-        val left = (layout.canvas.width - width) / 2f
-        val top = (layout.canvas.height - height) / 2f
+        val bounds = RectF(0f, 0f, layout.canvas.width.toFloat(), layout.canvas.height.toFloat())
         val state = canvas.save()
         canvas.clipOutRect(layout.photo.asRect())
-        canvas.drawBitmap(sample, null, RectF(left, top, left + width, top + height), Paint(Paint.FILTER_BITMAP_FLAG))
+        canvas.drawBitmap(sample, null, bounds, Paint(Paint.FILTER_BITMAP_FLAG or Paint.DITHER_FLAG))
         val tint = color(frame.color, 0xFF16232F.toInt())
         val alpha = (255 * frame.tintStrength.coerceIn(0f, .9f)).roundToInt()
         canvas.drawColor((tint and 0xFFFFFF) or (alpha shl 24))
+        val pitch = layout.reference / 960f
+        val noise = BitmapShader(glassGrain, Shader.TileMode.REPEAT, Shader.TileMode.REPEAT).apply {
+            setLocalMatrix(Matrix().apply { setScale(pitch, pitch) })
+        }
+        canvas.drawRect(bounds, Paint(Paint.FILTER_BITMAP_FLAG).apply { shader = noise })
+        if (frame.hairline) {
+            val edge = layout.photo.asRect()
+            val shadow = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
+            for (ring in 6 downTo 1) {
+                shadow.strokeWidth = layout.reference * .004f * ring
+                shadow.color = Color.argb(8 - ring, 8, 17, 24)
+                canvas.drawRect(edge, shadow)
+            }
+        }
         canvas.restoreToCount(state)
     }
 
@@ -228,6 +251,7 @@ class WatermarkRenderer(private val context: Context, private val photos: PhotoR
 
     private fun drawLayers(
         canvas: Canvas,
+        output: Bitmap,
         layout: WatermarkLayout,
         template: WatermarkTemplate,
         metadata: PhotoMetadata,
@@ -251,10 +275,30 @@ class WatermarkRenderer(private val context: Context, private val photos: PhotoR
                 val padY = minOf(margin, remainingY / 2f)
                 val x = area.left + padX + (remainingX - 2 * padX) * layer.anchor.x + area.width * layer.x
                 val y = area.top + padY + (remainingY - 2 * padY) * layer.anchor.y + area.height * layer.y
-                drawMarker(canvas, marker, x, y, layer.rotation)
+                val ink = if (template.frame.background == FrameBackground.FROSTED && layer.autoGlassInk && layer.canUseGlassInk) {
+                    glassInk(output, layout, RectF(x, y, x + marker.width, y + marker.height))
+                } else null
+                val visibleMarker = if (ink != null) {
+                    val adapted = layer.copy(color = if (ink == BrandTone.LIGHT) "#FAF9F6" else "#11191E", brandTone = ink)
+                    getMarker(adapted, area, layout.reference, metadata, overrides, palette) ?: marker
+                } else marker
+                drawMarker(canvas, visibleMarker, x, y, layer.rotation)
             }
             canvas.restoreToCount(state)
         }
+    }
+
+    private fun glassInk(output: Bitmap, layout: WatermarkLayout, box: RectF): BrandTone {
+        // Sample only the patch immediately behind this inscription, before painting it.
+        val luminances = FloatArray(15)
+        for (row in 0..2) for (column in 0..4) {
+            val x = (box.left + box.width() * (column + .5f) / 5f) * output.width / layout.canvas.width
+            val y = (box.top + box.height() * (row + .5f) / 3f) * output.height / layout.canvas.height
+            luminances[row * 5 + column] = Color.luminance(output.getPixel(
+                x.toInt().coerceIn(0, output.width - 1), y.toInt().coerceIn(0, output.height - 1)))
+        }
+        luminances.sort()
+        return if (luminances[7] > .19f) BrandTone.DARK else BrandTone.LIGHT
     }
 
     private fun getMarker(

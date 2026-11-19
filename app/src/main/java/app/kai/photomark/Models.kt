@@ -118,8 +118,8 @@ data class Frame(
     val ratio: FrameRatio = FrameRatio.ORIGINAL,
     val hairline: Boolean = false,
     val background: FrameBackground = FrameBackground.SOLID,
-    val blur: Float = .08f,
-    val tintStrength: Float = .48f,
+    val blur: Float = .043f,
+    val tintStrength: Float = .10f,
 )
 
 @Serializable
@@ -184,7 +184,10 @@ data class WatermarkLayer(
     val brandStyle: BrandStyle = BrandStyle.ORIGINAL,
     val paletteStyle: PaletteStyle = PaletteStyle.STRIP,
     val paletteCount: Int = 5,
+    val autoGlassInk: Boolean = false,
 ) {
+    val canUseGlassInk get() = !tile && background == null && area != LayerArea.PHOTO && area != LayerArea.CANVAS &&
+        kind in listOf(LayerKind.TEXT, LayerKind.EXIF, LayerKind.BRAND)
     val label get() = when (kind) {
         LayerKind.TEXT -> text.takeIf(String::isNotBlank) ?: kind.label
         LayerKind.EXIF -> fields.singleOrNull()?.label ?: kind.label
