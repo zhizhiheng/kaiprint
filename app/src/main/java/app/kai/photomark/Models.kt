@@ -98,9 +98,42 @@ data class PixelChoice(
 
 data class PhotoInfo(val metadata: PhotoMetadata, val choices: List<PixelChoice>)
 
+/** Saved by name, so existing entries keep their names when new ratios are added. */
 @Serializable
 enum class FrameRatio(val label: String, val across: Int, val down: Int) {
-    ORIGINAL("自由留白", 0, 0), SQUARE("1:1", 1, 1), PORTRAIT("4:5", 4, 5), STORY("9:16", 9, 16)
+    ORIGINAL("自由留白", 0, 0),
+    SQUARE("1:1", 1, 1),
+    PORTRAIT("4:5", 4, 5),
+    THREE_FOUR("3:4", 3, 4),
+    TWO_THREE("2:3", 2, 3),
+    STORY("9:16", 9, 16),
+    FOUR_THREE("4:3", 4, 3),
+    THREE_TWO("3:2", 3, 2),
+    WIDE("16:9", 16, 9),
+}
+
+/** One-tap canvas shapes for the places people post to most. */
+enum class PostTarget(val label: String, val ratio: FrameRatio) {
+    XIAOHONGSHU("小红书", FrameRatio.THREE_FOUR),
+    DOUYIN("抖音", FrameRatio.STORY),
+    BILIBILI("B 站封面", FrameRatio.WIDE),
+    SQUARE("方图", FrameRatio.SQUARE),
+}
+
+/** An output size cap. Zero on both edges keeps the full rendered size. */
+data class SizeLimit(val longEdge: Int = 0, val shortEdge: Int = 0) {
+    val label get() = when {
+        shortEdge > 0 -> "短边 $shortEdge px"
+        longEdge > 0 -> "长边 $longEdge px"
+        else -> "原尺寸"
+    }
+
+    companion object {
+        val choices = listOf(
+            SizeLimit(), SizeLimit(longEdge = 4096), SizeLimit(longEdge = 3000), SizeLimit(longEdge = 2048),
+            SizeLimit(shortEdge = 1440), SizeLimit(shortEdge = 1080), SizeLimit(longEdge = 1080),
+        )
+    }
 }
 
 @Serializable
@@ -212,7 +245,27 @@ data class EditDraft(
     val template: WatermarkTemplate,
     val overrides: Map<String, Map<MetadataField, String>> = emptyMap(),
     val pixelChoices: Map<String, PixelKind> = emptyMap(),
-)
+) {
+    /** Writes the same values onto several photos. Fields not in [values] keep each photo's own override. */
+    fun withOverrides(photoIds: Collection<String>, values: Map<MetadataField, String>): EditDraft {
+        if (values.isEmpty()) return this
+        val cleaned = values.mapValues { it.value.take(120) }
+        return copy(overrides = overrides + photoIds.associateWith { overrides[it].orEmpty() + cleaned })
+    }
+}
+
+/** Camera details saved once and written onto many photos, such as one roll of film or a manual lens. */
+@Serializable
+data class ParameterSet(val id: String, val name: String, val values: Map<MetadataField, String>) {
+    val summary get() = listOf(MetadataField.MODEL, MetadataField.LENS, MetadataField.ISO)
+        .mapNotNull { values[it]?.takeIf(String::isNotBlank) }
+        .ifEmpty { values.values.filter(String::isNotBlank).take(2) }
+        .joinToString(" · ")
+
+    companion object {
+        const val LIMIT = 50
+    }
+}
 
 @Serializable
 enum class OutputFormat(val label: String, val extension: String, val mime: String) {
@@ -234,7 +287,12 @@ data class ExportSettings(
     val allowEmbedded: Boolean = false,
     val allowSdr: Boolean = true,
     val colorSpace: OutputColor = OutputColor.SRGB,
-)
+    val shortEdge: Int = 0,
+) {
+    val size get() = SizeLimit(longEdge, shortEdge)
+
+    fun withSize(limit: SizeLimit) = copy(longEdge = limit.longEdge, shortEdge = limit.shortEdge)
+}
 
 @Serializable
 data class ExportInput(
@@ -248,9 +306,13 @@ data class PixelSize(val width: Int, val height: Int) {
     val longEdge get() = max(width, height)
     val shortEdge get() = minOf(width, height)
 
-    fun fit(longEdge: Int): PixelSize {
-        if (longEdge == 0 || this.longEdge <= longEdge) return this
-        val scale = longEdge.toDouble() / this.longEdge
+    /** Scales down until both caps hold. Zero means no cap, and a size is never scaled up. */
+    fun fit(longEdge: Int, shortEdge: Int = 0): PixelSize {
+        val scale = minOf(
+            if (longEdge > 0 && this.longEdge > longEdge) longEdge.toDouble() / this.longEdge else 1.0,
+            if (shortEdge > 0 && this.shortEdge > shortEdge) shortEdge.toDouble() / this.shortEdge else 1.0,
+        )
+        if (scale >= 1.0) return this
         return PixelSize((width * scale).roundToInt().coerceAtLeast(1), (height * scale).roundToInt().coerceAtLeast(1))
     }
 
@@ -297,12 +359,18 @@ data class WatermarkLayout(
         fun calculate(
             source: PixelSize, template: WatermarkTemplate, maximumEdge: Int = 0,
             metadata: PhotoMetadata? = null, overrides: Map<MetadataField, String> = emptyMap(),
+            maximumShortEdge: Int = 0,
         ): WatermarkLayout {
             val layers = if (metadata == null) template.layers else template.layers.filter {
                 it.kind != LayerKind.BRAND || it.brand.resolve(metadata, overrides) != null
             }
-            return calculate(source, template.frame, maximumEdge, layers)
+            return calculate(source, template.frame, SizeLimit(maximumEdge, maximumShortEdge), layers)
         }
+
+        fun calculate(
+            source: PixelSize, template: WatermarkTemplate, settings: ExportSettings,
+            metadata: PhotoMetadata?, overrides: Map<MetadataField, String>,
+        ) = calculate(source, template, settings.longEdge, metadata, overrides, settings.shortEdge)
 
         private data class EdgeSpace(val padding: Float, val brandRow: Float = 0f)
 
@@ -321,10 +389,10 @@ data class WatermarkLayout(
             return if (sharedColumn) EdgeSpace(padding + height, height) else EdgeSpace(maxOf(padding, height))
         }
 
-        fun calculate(source: PixelSize, frame: Frame, maximumEdge: Int = 0) =
-            calculate(source, frame, maximumEdge, emptyList())
+        fun calculate(source: PixelSize, frame: Frame, maximumEdge: Int = 0, maximumShortEdge: Int = 0) =
+            calculate(source, frame, SizeLimit(maximumEdge, maximumShortEdge), emptyList())
 
-        private fun calculate(source: PixelSize, frame: Frame, maximumEdge: Int, layers: List<WatermarkLayer>): WatermarkLayout {
+        private fun calculate(source: PixelSize, frame: Frame, limit: SizeLimit, layers: List<WatermarkLayer>): WatermarkLayout {
             require(source.width > 0 && source.height > 0)
             val unit = source.shortEdge.toFloat()
             val left = (frame.left.coerceIn(0f, 1f) * unit).roundToInt()
@@ -347,7 +415,7 @@ data class WatermarkLayout(
                 width = newWidth
                 height = newHeight
             }
-            val canvas = PixelSize(width, height).fit(maximumEdge)
+            val canvas = PixelSize(width, height).fit(limit.longEdge, limit.shortEdge)
             val scale = canvas.longEdge.toFloat() / max(width, height)
             val photo = PixelRect(
                 photoLeft * scale, photoTop * scale,

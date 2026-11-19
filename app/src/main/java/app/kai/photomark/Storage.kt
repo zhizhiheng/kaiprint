@@ -102,6 +102,10 @@ interface PhotoMarkDao {
 
     @Query("UPDATE ExportItemRow SET state = 'WAITING', errorCode = NULL, errorMessage = NULL WHERE jobId = :id AND state = 'FAILED'")
     suspend fun resetFailures(id: String)
+
+    /** Inputs that a resume or a retry may still read, failed items included. */
+    @Query("SELECT input FROM ExportItemRow WHERE state != 'DONE'")
+    suspend fun unfinishedInputs(): List<String>
 }
 
 @Database(entities = [PresetRow::class, ExportJobRow::class, ExportItemRow::class], version = 1)

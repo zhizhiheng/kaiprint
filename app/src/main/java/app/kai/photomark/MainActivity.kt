@@ -1,7 +1,6 @@
 package app.kai.photomark
 
 import android.Manifest
-import android.content.ClipData
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -12,6 +11,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.viewModels
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
@@ -88,7 +88,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.LifecycleResumeEffect
-import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -105,8 +104,12 @@ internal val GoldDark = Color(0xFF2D210B)
 internal val Danger = Color(0xFFFFA396)
 
 class MainActivity : ComponentActivity() {
+    private val workspace: Workspace by viewModels()
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // A recreated screen already holds the photos from its first launch.
+        if (savedInstanceState == null) receive(intent)
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
             navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
@@ -121,9 +124,19 @@ class MainActivity : ComponentActivity() {
                 surfaceVariant = Raised, onSurfaceVariant = Muted, outline = Stroke,
                 outlineVariant = Stroke, error = Danger,
             )) {
-                PhotoMark(viewModel())
+                PhotoMark(workspace)
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        receive(intent)
+    }
+
+    private fun receive(intent: Intent?) {
+        intent?.getStringExtra(ExportService.SHOW_JOB)?.let { workspace.showJob(it) }
+        workspace.receiveShared(sharedUris(intent))
     }
 }
 
@@ -526,13 +539,6 @@ private fun ExportScreen(workspace: Workspace, diagnostics: () -> Unit) {
 }
 
 private fun share(context: android.content.Context, uris: List<Uri>) {
-    if (uris.isEmpty()) return
-    val intent = if (uris.size == 1) Intent(Intent.ACTION_SEND).putExtra(Intent.EXTRA_STREAM, uris.first())
-    else Intent(Intent.ACTION_SEND_MULTIPLE).putParcelableArrayListExtra(Intent.EXTRA_STREAM, ArrayList(uris))
-    val clips = ClipData.newUri(context.contentResolver, "光印成片", uris.first())
-    uris.drop(1).forEach { clips.addItem(ClipData.Item(it)) }
-    intent.type = "image/*"
-    intent.clipData = clips
-    intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-    runCatching { context.startActivity(Intent.createChooser(intent, "分享成片")) }
+    val chooser = shareResults(context, uris) ?: return
+    runCatching { context.startActivity(chooser) }
 }

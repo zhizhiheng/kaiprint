@@ -79,6 +79,18 @@ class Workspace(application: Application) : AndroidViewModel(application) {
         private set
     var startInProgress by mutableStateOf(false)
         private set
+    var parameterSets by mutableStateOf(
+        runCatching {
+            prefs.getString("parameterSets", null)?.let { storageJson.decodeFromString<List<ParameterSet>>(it) }
+        }.getOrNull().orEmpty(),
+    )
+        private set
+    /** The last export choices. Consent to use a RAW preview or convert HDR is asked for again each time. */
+    var exportSettings by mutableStateOf(
+        runCatching { prefs.getString("export", null)?.let { storageJson.decodeFromString<ExportSettings>(it) } }
+            .getOrNull()?.copy(allowEmbedded = false, allowSdr = ExportSettings().allowSdr) ?: ExportSettings(),
+    )
+        private set
 
     val presets: StateFlow<List<PresetRow>> = dao.observePresets()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -154,15 +166,51 @@ class Workspace(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val sources = capture("导入失败，请检查文件访问权限") { withContext(Dispatchers.IO) { read() } }
                 ?: return@launch
-            if (sources.isEmpty()) {
-                message = "所选位置没有可导入的照片"
-                return@launch
-            }
-            imported = (sources + imported).distinctBy(PhotoSource::uri)
-            val groups = withContext(Dispatchers.IO) { app.photos.groups(sources) }
-            begin(groups)
-            mergeGallery(galleryGeneration)
+            showImported(sources, "所选位置没有可导入的照片")
         }
+    }
+
+    /** Opens photos another app shared with KaiPrint in the editor. */
+    fun receiveShared(uris: List<Uri>) {
+        if (uris.isEmpty()) return
+        val accepted = uris.take(MAX_SHARED_PHOTOS)
+        val open = editing.flatMap { listOfNotNull(it.primary.uri, it.developed?.uri) }.toSet()
+        if (accepted.size >= 10) message = "正在打开分享的 ${accepted.size} 张照片"
+        viewModelScope.launch {
+            val root = File(app.filesDir, "shared")
+            val sources = capture("无法读取分享的照片，请检查存储空间") {
+                val keep = open + referencedSources()
+                val (removed, copied) = withContext(Dispatchers.IO) {
+                    pruneShared(root, keep) to app.contentResolver.copyShared(accepted, File(root, id()))
+                }
+                imported = imported.filterNot { it.uri in removed }
+                copied
+            } ?: return@launch
+            if (uris.size > accepted.size) message = "一次最多接收 $MAX_SHARED_PHOTOS 张，已打开前 $MAX_SHARED_PHOTOS 张"
+            showImported(sources, "分享的文件里没有可识别的照片")
+        }
+    }
+
+    /** Source photos that an open edit or an unfinished export still needs. */
+    private suspend fun referencedSources(): Set<String> = withContext(Dispatchers.IO) {
+        val saved = runCatching {
+            prefs.getString("edit", null)?.let { storageJson.decodeFromString<SavedEdit>(it).photos }
+        }.getOrNull().orEmpty()
+        val pending = dao.unfinishedInputs().mapNotNull {
+            runCatching { storageJson.decodeFromString<ExportInput>(it) }.getOrNull()
+        }
+        (saved + pending).flatMap { listOfNotNull(it.photo.uri, it.companion?.uri) }.toSet()
+    }
+
+    private suspend fun showImported(sources: List<PhotoSource>, empty: String) {
+        if (sources.isEmpty()) {
+            message = empty
+            return
+        }
+        imported = (sources + imported).distinctBy(PhotoSource::uri)
+        val groups = withContext(Dispatchers.IO) { app.photos.groups(sources) }
+        begin(groups)
+        mergeGallery(galleryGeneration)
     }
 
     private suspend fun mergeGallery(generation: Int) {
@@ -227,7 +275,11 @@ class Workspace(application: Application) : AndroidViewModel(application) {
     }
 
     fun apply(template: WatermarkTemplate) {
-        val selected = if (template in Templates.all) template.copy(captions = draft.template.captions) else template
+        // Built-in templates carry no canvas ratio, so switching between them keeps the chosen post shape.
+        val selected = if (template in Templates.all) template.copy(
+            captions = draft.template.captions,
+            frame = template.frame.copy(ratio = draft.template.frame.ratio),
+        ) else template
         edit(draft.copy(template = selected))
         activeLayer = null
         if (editing.isNotEmpty()) screen = Screen.EDITOR
@@ -293,6 +345,37 @@ class Workspace(application: Application) : AndroidViewModel(application) {
         val overrides = draft.overrides.toMutableMap()
         if (values.isEmpty()) overrides.remove(photo.id) else overrides[photo.id] = values
         edit(draft.copy(overrides = overrides))
+    }
+
+    /** Writes the given fields onto every photo in the edit, keeping each photo's other changes. */
+    fun overrideAll(values: Map<MetadataField, String>) {
+        if (values.isEmpty()) return
+        edit(draft.withOverrides(editing.map(PhotoGroup::id), values))
+        message = "已写入 ${editing.size} 张照片"
+    }
+
+    fun applyParameterSet(set: ParameterSet, photos: List<PhotoGroup>) {
+        edit(draft.withOverrides(photos.map(PhotoGroup::id), set.values))
+        message = if (photos.size == 1) "已套用「${set.name}」" else "已为 ${photos.size} 张照片套用「${set.name}」"
+    }
+
+    fun saveParameterSet(name: String, values: Map<MetadataField, String>) {
+        val title = name.trim().take(30)
+        if (title.isBlank() || values.isEmpty()) return
+        val existing = parameterSets.filterNot { it.name == title }
+        if (existing.size >= ParameterSet.LIMIT) {
+            message = "最多保存 ${ParameterSet.LIMIT} 个参数组"
+            return
+        }
+        storeParameterSets(listOf(ParameterSet(id(), title, values)) + existing)
+        message = "已保存参数组「$title」"
+    }
+
+    fun deleteParameterSet(id: String) = storeParameterSets(parameterSets.filterNot { it.id == id })
+
+    private fun storeParameterSets(sets: List<ParameterSet>) {
+        parameterSets = sets
+        prefs.edit().putString("parameterSets", storageJson.encodeToString(sets)).apply()
     }
 
     fun choosePixels(photo: PhotoGroup, kind: PixelKind) {
@@ -482,6 +565,8 @@ class Workspace(application: Application) : AndroidViewModel(application) {
 
     fun enqueue(settings: ExportSettings, all: Boolean) {
         if (startInProgress || runningJob != null || editing.isEmpty()) return
+        exportSettings = settings
+        prefs.edit().putString("export", storageJson.encodeToString(settings)).apply()
         val images = if (all) editing else listOfNotNull(current)
         val id = id()
         val template = draft.template
@@ -517,6 +602,11 @@ class Workspace(application: Application) : AndroidViewModel(application) {
     }
 
     fun pause() { ExportService.pause(app) }
+
+    fun showJob(id: String) {
+        selectedJob = id
+        screen = Screen.EXPORTS
+    }
 
     fun writeDiagnostics(uri: Uri) {
         val id = selectedJob ?: return

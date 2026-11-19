@@ -5,6 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.ClipData
 import android.content.ContentResolver
 import android.content.ContentValues
 import android.content.Context
@@ -60,7 +61,7 @@ class Exporter(private val app: PhotoMarkApp) {
         try {
             val info = app.photos.info(PhotoGroup(input.photo, input.companion))
             val choice = selectPixels(info, input.pixelKind, settings)
-            val layout = WatermarkLayout.calculate(choice.size, template, settings.longEdge, info.metadata, input.overrides)
+            val layout = WatermarkLayout.calculate(choice.size, template, settings, info.metadata, input.overrides)
             jobContext.ensureActive()
             val bitmap = app.renderer.renderForExport(choice, layout, template, info.metadata, input.overrides,
                 settings.colorSpace, settings.format) {
@@ -199,6 +200,22 @@ internal fun selectPixels(
 
 class ExportFailure(val code: String, message: String) : IOException(message)
 
+/** A system share sheet for finished photos, granting the chosen app read access to each one. */
+internal fun shareResults(context: Context, uris: List<Uri>): Intent? {
+    val shared = uris.take(MAX_SHARE)
+    if (shared.isEmpty()) return null
+    val intent = if (shared.size == 1) Intent(Intent.ACTION_SEND).putExtra(Intent.EXTRA_STREAM, shared.first())
+    else Intent(Intent.ACTION_SEND_MULTIPLE).putParcelableArrayListExtra(Intent.EXTRA_STREAM, ArrayList(shared))
+    val clips = ClipData.newUri(context.contentResolver, "光印成片", shared.first())
+    shared.drop(1).forEach { clips.addItem(ClipData.Item(it)) }
+    intent.type = "image/*"
+    intent.clipData = clips
+    intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    return Intent.createChooser(intent, "分享成片")
+}
+
+private const val MAX_SHARE = 150
+
 class ExportService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val app get() = application as PhotoMarkApp
@@ -279,12 +296,36 @@ class ExportService : Service() {
                 completed++
             }
             dao.updateJobState(id, RunState.FINISHED.name)
+            announce(id, dao.items(id))
         } catch (error: CancellationException) {
             withContext(NonCancellable) { dao.updateJobState(id, RunState.PAUSED.name) }
             throw error
         } catch (_: Exception) {
             dao.updateJobState(id, RunState.PAUSED.name)
         }
+    }
+
+    /** Leaves a finished notice that opens the results and can share them in one tap. */
+    private fun announce(id: String, items: List<ExportItemRow>) {
+        val outputs = items.filter { it.state == ItemState.DONE.name }.mapNotNull { it.outputUri?.let(Uri::parse) }
+        val failed = items.count { it.state == ItemState.FAILED.name }
+        if (outputs.isEmpty() && failed == 0) return
+        val open = PendingIntent.getActivity(this, 2, Intent(this, MainActivity::class.java)
+            .putExtra(SHOW_JOB, id)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val builder = Notification.Builder(this, CHANNEL)
+            .setContentTitle(if (failed == 0) "成片已保存" else "导出结束")
+            .setSmallIcon(android.R.drawable.ic_menu_gallery)
+            .setContentText("已导出 ${outputs.size} 张" + if (failed > 0) " · $failed 张失败" else "")
+            .setContentIntent(open)
+            .setAutoCancel(true)
+        shareResults(this, outputs)?.let { chooser ->
+            val share = PendingIntent.getActivity(this, 3, chooser,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+            builder.addAction(Notification.Action.Builder(null, "分享", share).build())
+        }
+        notifications.notify(FINISHED_NOTIFICATION_ID, builder.build())
     }
 
     private fun errorDetails(error: Exception): Pair<String, String> = when (error) {
@@ -319,6 +360,8 @@ class ExportService : Service() {
     companion object {
         private const val CHANNEL = "exports"
         private const val NOTIFICATION_ID = 10
+        private const val FINISHED_NOTIFICATION_ID = 11
+        const val SHOW_JOB = "app.kai.photomark.SHOW_JOB"
         private const val PAUSE = "app.kai.photomark.PAUSE"
         private const val JOB_ID = "job_id"
         private const val RETRY_FAILURES = "retry_failures"

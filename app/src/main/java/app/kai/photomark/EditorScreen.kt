@@ -48,6 +48,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
@@ -346,8 +347,24 @@ private fun TemplatePanel(
             }
         }
     }
+    PostTargets(workspace)
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
         TextButton(save) { Text("保存为预设") }
+    }
+}
+
+@Composable
+private fun PostTargets(workspace: Workspace) {
+    val frame = workspace.draft.template.frame
+    Text("发布到", color = Muted, style = MaterialTheme.typography.bodySmall)
+    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).testTag("post-targets"),
+        horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        for (target in PostTarget.entries) {
+            val chosen = frame.ratio == target.ratio
+            FilterChip(chosen, {
+                workspace.frame(frame.copy(ratio = if (chosen) FrameRatio.ORIGINAL else target.ratio))
+            }, { Text("${target.label} ${target.ratio.label}", maxLines = 1) })
+        }
     }
 }
 
@@ -455,7 +472,10 @@ private fun FramePanel(workspace: Workspace, bitmap: Bitmap?) {
         value = if (bitmap == null) emptyList() else withContext(Dispatchers.Default) { sampledColors(bitmap) }
     }
     val frame = workspace.draft.template.frame
-    ChoiceMenu("画布比例", frame.ratio, FrameRatio.entries, { it.label }) { workspace.frame(frame.copy(ratio = it)) }
+    ChoiceMenu("画布比例", frame.ratio, FrameRatio.entries, { ratio ->
+        PostTarget.entries.filter { it.ratio == ratio }.joinToString("、") { it.label }
+            .let { if (it.isEmpty()) ratio.label else "${ratio.label} · $it" }
+    }) { workspace.frame(frame.copy(ratio = it)) }
     ChoiceMenu("边框背景", frame.background, FrameBackground.entries, FrameBackground::label) {
         workspace.frame(frame.copy(background = it))
     }
@@ -540,6 +560,7 @@ private fun MetadataPanel(workspace: Workspace, group: PhotoGroup, info: PhotoIn
     if (pixels?.kind == PixelKind.EMBEDDED) Text("此来源仅提供内嵌预览尺寸。", color = Gold,
         style = MaterialTheme.typography.bodySmall)
 
+    ParameterSets(workspace, group, saved)
     var editing by remember(group.id) { mutableStateOf(false) }
     var draft by remember(group.id, saved) { mutableStateOf(saved) }
     TextButton({ editing = !editing }) { Text(if (editing) "收起改写参数" else "改写水印参数") }
@@ -558,9 +579,81 @@ private fun MetadataPanel(workspace: Workspace, group: PhotoGroup, info: PhotoIn
             }
         }
     }
-    if (editing) Row {
-        TextButton({ workspace.updateOverrides(group, emptyMap()); editing = false }) { Text("恢复原参数") }
-        Button({ workspace.updateOverrides(group, draft); editing = false }) { Text("应用到这张照片") }
+    if (editing) {
+        Row {
+            TextButton({ workspace.updateOverrides(group, emptyMap()); editing = false }) { Text("恢复原参数") }
+            Button({ workspace.updateOverrides(group, draft); editing = false }) { Text("应用到这张照片") }
+        }
+        if (workspace.editing.size > 1) {
+            OutlinedButton({ workspace.overrideAll(draft); editing = false }, enabled = draft.isNotEmpty(),
+                modifier = Modifier.fillMaxWidth()) { Text("应用到全部 ${workspace.editing.size} 张") }
+            Text(if (draft.isEmpty()) "先改写至少一项参数。"
+                else "把这张改写过的 ${draft.size} 项写入整组，其余各项保持每张照片自己的参数。",
+                color = Muted, style = MaterialTheme.typography.bodySmall)
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ParameterSets(workspace: Workspace, group: PhotoGroup, saved: Map<MetadataField, String>) {
+    var naming by remember { mutableStateOf(false) }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("参数组", style = MaterialTheme.typography.titleSmall, color = Ink, modifier = Modifier.weight(1f))
+        TextButton({ naming = true }, enabled = saved.isNotEmpty()) { Text("保存这张的改写") }
+    }
+    if (workspace.parameterSets.isEmpty()) {
+        Text("胶片、手动镜头等没有拍摄参数的照片，可以把机型和镜头存成参数组，再一次写入整组。",
+            color = Muted, style = MaterialTheme.typography.bodySmall)
+    }
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp),
+        modifier = Modifier.testTag("parameter-sets")) {
+        for (set in workspace.parameterSets) key(set.id) {
+            var open by remember { mutableStateOf(false) }
+            Box {
+                Surface(onClick = { open = true }, shape = RoundedCornerShape(10.dp), color = Raised,
+                    modifier = Modifier.border(1.dp, Stroke, RoundedCornerShape(10.dp))) {
+                    Column(Modifier.padding(horizontal = 11.dp, vertical = 7.dp)) {
+                        Text(set.name, color = Ink, style = MaterialTheme.typography.labelLarge, maxLines = 1)
+                        if (set.summary.isNotEmpty()) Text(set.summary, color = Muted, maxLines = 1,
+                            overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelSmall,
+                            modifier = Modifier.width(150.dp))
+                    }
+                }
+                DropdownMenu(open, { open = false }) {
+                    DropdownMenuItem(text = { Text("套用到这张") }, onClick = {
+                        open = false
+                        workspace.applyParameterSet(set, listOf(group))
+                    })
+                    if (workspace.editing.size > 1) DropdownMenuItem(text = { Text("套用到全部 ${workspace.editing.size} 张") },
+                        onClick = {
+                            open = false
+                            workspace.applyParameterSet(set, workspace.editing)
+                        })
+                    DropdownMenuItem(text = { Text("删除参数组", color = Danger) }, onClick = {
+                        open = false
+                        workspace.deleteParameterSet(set.id)
+                    })
+                }
+            }
+        }
+    }
+    if (naming) {
+        var name by remember { mutableStateOf(saved[MetadataField.MODEL].orEmpty().take(30)) }
+        AlertDialog(onDismissRequest = { naming = false }, title = { Text("保存参数组") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(name, { name = it.take(30) }, label = { Text("名称") }, singleLine = true)
+                    Text(saved.keys.joinToString("、") { it.label }, color = Muted,
+                        style = MaterialTheme.typography.bodySmall)
+                }
+            },
+            confirmButton = {
+                Button({ workspace.saveParameterSet(name, saved); naming = false }, enabled = name.isNotBlank()) {
+                    Text("保存")
+                }
+            },
+            dismissButton = { TextButton({ naming = false }) { Text("取消") } })
     }
 }
 
@@ -723,10 +816,11 @@ private fun Palette(label: String, selected: String, sampled: List<String> = emp
 private fun ExportOptions(workspace: Workspace, pixels: PixelChoice, metadata: PhotoMetadata?,
                           overrides: Map<MetadataField, String>, close: () -> Unit,
                           output: (ExportSettings, Boolean) -> Unit) {
-    var settings by remember { mutableStateOf(ExportSettings()) }
+    var settings by remember { mutableStateOf(workspace.exportSettings) }
     var all by remember { mutableStateOf(workspace.editing.size > 1) }
     val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val layout = WatermarkLayout.calculate(pixels.size, workspace.draft.template, settings.longEdge, metadata, overrides)
+    val layout = WatermarkLayout.calculate(pixels.size, workspace.draft.template, settings, metadata, overrides)
+    val sizes = (SizeLimit.choices + settings.size).distinct()
     ModalBottomSheet(onDismissRequest = close, sheetState = sheet, containerColor = Panel) {
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 22.dp)
             .padding(bottom = 20.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
@@ -737,9 +831,7 @@ private fun ExportOptions(workspace: Workspace, pixels: PixelChoice, metadata: P
                 }) { all = it }
             }
             ChoiceMenu("文件格式", settings.format, OutputFormat.entries, { it.label }) { settings = settings.copy(format = it) }
-            ChoiceMenu("成片尺寸", settings.longEdge, listOf(0, 4096, 3000, 2048, 1080), {
-                if (it == 0) "原尺寸" else "长边 $it px"
-            }) { settings = settings.copy(longEdge = it) }
+            ChoiceMenu("成片尺寸", settings.size, sizes, SizeLimit::label) { settings = settings.withSize(it) }
             Text("当前照片 · ${layout.canvas} px", color = Gold, style = MaterialTheme.typography.bodySmall)
             ChoiceMenu("输出色域", settings.colorSpace, OutputColor.entries, { it.label }) {
                 settings = settings.copy(colorSpace = it)
