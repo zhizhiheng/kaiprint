@@ -270,7 +270,7 @@ private fun LibraryScreen(
         if (gallery.isEmpty() && !workspace.loading) {
             Box(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 26.dp), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                    Image(painterResource(R.drawable.app_icon), null,
+                    Image(painterResource(R.drawable.kaiprint_mark), null,
                         Modifier.size(80.dp).clip(RoundedCornerShape(24.dp)))
                     Text("先选几张照片", color = Ink, style = MaterialTheme.typography.headlineSmall)
                     Text("为一张照片调好样式，再用于整组。", color = Muted, style = MaterialTheme.typography.bodyMedium)

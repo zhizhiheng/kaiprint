@@ -1,5 +1,7 @@
 # KaiPrint · 光印
 
+![光印开源摄影水印工具，墨绿金色横幅与伦敦夜景样片](docs/brand/kaiprint-banner.webp)
+
 光印是 Android 摄影水印工作台。可在同一张照片上叠加署名、Logo、相机参数和边框，保存排版后批量导出。照片读取、渲染和预设管理均在设备上完成。成片独立保存到 `Pictures/光印`。
 
 ## 水印成片
@@ -29,6 +31,8 @@
 </details>
 
 ## 安装和运行
+
+Android 安装包、校验文件和版本说明见 [GitHub Releases](https://github.com/zhizhiheng/kaiprint/releases/latest)。[App 封面](docs/brand/app-cover.webp) · [品牌图制作说明和提示词](docs/brand/README.md)
 
 使用 Android Studio 打开项目。命令行构建需要 JDK 17 或 21、Android SDK 36、NDK 28.2.13676358 和 CMake 3.22.1。项目通过 Gradle Wrapper 固定 Gradle 版本。首次构建需要下载 Android 依赖和带校验值的原生库源码。
 
