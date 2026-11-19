@@ -138,8 +138,9 @@ enum class LayerArea(val label: String) {
 }
 
 @Serializable
-enum class LayerColumn(val label: String) {
-    FULL("整区"), LEFT("左栏"), RIGHT("右栏"), LEFT_HALF("左半区"), RIGHT_HALF("右半区"),
+enum class LayerColumn(val label: String, val start: Float, val end: Float) {
+    FULL("整区", 0f, 1f), LEFT("左栏", 0f, .28f), RIGHT("右栏", .28f, 1f),
+    LEFT_HALF("左半区", 0f, .5f), RIGHT_HALF("右半区", .5f, 1f),
 }
 
 @Serializable
@@ -185,6 +186,7 @@ data class WatermarkLayer(
     val paletteStyle: PaletteStyle = PaletteStyle.STRIP,
     val paletteCount: Int = 5,
     val autoGlassInk: Boolean = false,
+    val reserveBrandSpace: Boolean = false,
 ) {
     val canUseGlassInk get() = !tile && background == null && area != LayerArea.PHOTO && area != LayerArea.CANVAS &&
         kind in listOf(LayerKind.TEXT, LayerKind.EXIF, LayerKind.BRAND)
@@ -261,17 +263,25 @@ data class PixelRect(val left: Float, val top: Float, val right: Float, val bott
     val height get() = bottom - top
 }
 
-data class WatermarkLayout(val canvas: PixelSize, val photo: PixelRect, val reference: Float) {
+data class WatermarkLayout(
+    val canvas: PixelSize, val photo: PixelRect, val reference: Float,
+    private val topBrandHeight: Float = 0f, private val bottomBrandHeight: Float = 0f,
+) {
     fun area(layer: WatermarkLayer): PixelRect {
-        val box = area(layer.area)
-        val divider = box.left + box.width * .28f
-        return when (layer.column) {
-            LayerColumn.FULL -> box
-            LayerColumn.LEFT -> box.copy(right = divider)
-            LayerColumn.RIGHT -> box.copy(left = divider)
-            LayerColumn.LEFT_HALF -> box.copy(right = box.left + box.width / 2f)
-            LayerColumn.RIGHT_HALF -> box.copy(left = box.left + box.width / 2f)
+        val band = area(layer.area)
+        val inBrandRow = layer.kind == LayerKind.BRAND && layer.reserveBrandSpace
+        val box = when {
+            layer.area == LayerArea.TOP && topBrandHeight > 0f -> {
+                val split = band.bottom - topBrandHeight
+                if (inBrandRow) band.copy(top = split) else band.copy(bottom = split)
+            }
+            layer.area == LayerArea.BOTTOM && bottomBrandHeight > 0f -> {
+                val split = band.top + bottomBrandHeight
+                if (inBrandRow) band.copy(bottom = split) else band.copy(top = split)
+            }
+            else -> band
         }
+        return box.copy(left = box.left + box.width * layer.column.start, right = box.left + box.width * layer.column.end)
     }
 
     fun area(area: LayerArea) = when (area) {
@@ -284,13 +294,45 @@ data class WatermarkLayout(val canvas: PixelSize, val photo: PixelRect, val refe
     }
 
     companion object {
-        fun calculate(source: PixelSize, frame: Frame, maximumEdge: Int = 0): WatermarkLayout {
+        fun calculate(
+            source: PixelSize, template: WatermarkTemplate, maximumEdge: Int = 0,
+            metadata: PhotoMetadata? = null, overrides: Map<MetadataField, String> = emptyMap(),
+        ): WatermarkLayout {
+            val layers = if (metadata == null) template.layers else template.layers.filter {
+                it.kind != LayerKind.BRAND || it.brand.resolve(metadata, overrides) != null
+            }
+            return calculate(source, template.frame, maximumEdge, layers)
+        }
+
+        private data class EdgeSpace(val padding: Float, val brandRow: Float = 0f)
+
+        private fun edgeSpace(layers: List<WatermarkLayer>, area: LayerArea, padding: Float): EdgeSpace {
+            val visible = layers.filter { it.area == area && it.visible && it.opacity > 0f &&
+                (it.kind != LayerKind.BRAND || it.brand != BrandMark.NONE) }
+            val (logos, others) = visible.partition { it.kind == LayerKind.BRAND && it.reserveBrandSpace }
+            if (logos.isEmpty()) return EdgeSpace(padding)
+            val height = logos.maxOf {
+                val aspectAllowance = if (it.brandStyle == BrandStyle.WORDMARK) .48f else 1f
+                (it.size * aspectAllowance).coerceIn(.04f, .75f) + 2 * it.margin.coerceIn(0f, .035f)
+            }
+            val sharedColumn = logos.any { logo -> others.any {
+                logo.column.start < it.column.end && it.column.start < logo.column.end
+            } }
+            return if (sharedColumn) EdgeSpace(padding + height, height) else EdgeSpace(maxOf(padding, height))
+        }
+
+        fun calculate(source: PixelSize, frame: Frame, maximumEdge: Int = 0) =
+            calculate(source, frame, maximumEdge, emptyList())
+
+        private fun calculate(source: PixelSize, frame: Frame, maximumEdge: Int, layers: List<WatermarkLayer>): WatermarkLayout {
             require(source.width > 0 && source.height > 0)
             val unit = source.shortEdge.toFloat()
             val left = (frame.left.coerceIn(0f, 1f) * unit).roundToInt()
             val right = (frame.right.coerceIn(0f, 1f) * unit).roundToInt()
-            val top = (frame.top.coerceIn(0f, 1f) * unit).roundToInt()
-            val bottom = (frame.bottom.coerceIn(0f, 1f) * unit).roundToInt()
+            val topSpace = edgeSpace(layers, LayerArea.TOP, frame.top.coerceIn(0f, 1f))
+            val bottomSpace = edgeSpace(layers, LayerArea.BOTTOM, frame.bottom.coerceIn(0f, 1f))
+            val top = (topSpace.padding * unit).roundToInt()
+            val bottom = (bottomSpace.padding * unit).roundToInt()
             var width = source.width + left + right
             var height = source.height + top + bottom
             var photoLeft = left.toFloat()
@@ -311,7 +353,8 @@ data class WatermarkLayout(val canvas: PixelSize, val photo: PixelRect, val refe
                 photoLeft * scale, photoTop * scale,
                 (photoLeft + source.width) * scale, (photoTop + source.height) * scale,
             )
-            return WatermarkLayout(canvas, photo, unit * scale)
+            return WatermarkLayout(canvas, photo, unit * scale, (topSpace.brandRow * unit).roundToInt() * scale,
+                (bottomSpace.brandRow * unit).roundToInt() * scale)
         }
     }
 }

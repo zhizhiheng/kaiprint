@@ -135,7 +135,7 @@ fun EditorScreen(workspace: Workspace, importLogo: () -> Unit, importFont: () ->
     val template = if (drag == Offset.Zero || layer == null) draft.template else draft.template.copy(
         layers = draft.template.layers.map { if (it == layer) it.copy(x = it.x + drag.x, y = it.y + drag.y) else it },
     )
-    val layout = pixels?.let { WatermarkLayout.calculate(it.size, draft.template.frame) }
+    val layout = pixels?.let { WatermarkLayout.calculate(it.size, template, metadata = info?.metadata, overrides = override) }
     val preview by produceState<Bitmap?>(null, source, template, pixels, override, info?.metadata) {
         if (source == null || layout == null) {
             value = null
@@ -227,7 +227,7 @@ fun EditorScreen(workspace: Workspace, importLogo: () -> Unit, importFont: () ->
     }
     val currentPixels = pixels
     if (exporting && currentPixels != null) {
-        ExportOptions(workspace, currentPixels, { exporting = false }) { settings, all ->
+        ExportOptions(workspace, currentPixels, info?.metadata, override, { exporting = false }) { settings, all ->
             exporting = false
             export(settings, all)
         }
@@ -327,7 +327,7 @@ private fun TemplatePanel(
             val selected = workspace.draft.template.id == template.id
             val rendered by produceState<Bitmap?>(null, source, pixels, metadata, template, overrides) {
                 value = if (source != null && pixels != null && metadata != null) withContext(Dispatchers.Default) {
-                    workspace.app.renderer.preview(source, WatermarkLayout.calculate(pixels.size, template.frame),
+                    workspace.app.renderer.preview(source, WatermarkLayout.calculate(pixels.size, template, metadata = metadata, overrides = overrides),
                         template, metadata, overrides, 192)
                 } else null
             }
@@ -587,6 +587,12 @@ private fun BrandControls(
         if (mark == BrandMark.AUTO) "自动 · ${detected?.label ?: "未识别"}" else mark.label
     }) { workspace.layer(layer.copy(brand = it)) }
 
+    if (layer.brand != BrandMark.NONE) {
+        val placement = BrandPlacement.entries.firstOrNull { it.matches(layer) }
+        ChoiceMenu<BrandPlacement?>("标志位置", placement, BrandPlacement.entries, { it?.label ?: "自定义位置" }) {
+            if (it != null) workspace.layer(it.place(layer))
+        }
+    }
     val current = layer.brand.resolve(metadata, overrides) ?: return
     val original = current.graphic(BrandStyle.ORIGINAL) ?: return
     val graphic = current.graphic(layer.brandStyle) ?: return
@@ -641,7 +647,9 @@ private fun BrandStyleCard(
         ) {
             artwork?.let { Image(it.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Fit) }
         }
-        Text(style.label, Modifier.padding(top = 5.dp), color = if (selected) Gold else Ink,
+        val label = if (style == BrandStyle.SQUARE && brand in listOf(BrandMark.NIKON, BrandMark.NIKON_Z))
+            "尼康黄底方标" else style.label
+        Text(label, Modifier.padding(top = 5.dp), color = if (selected) Gold else Ink,
             style = MaterialTheme.typography.labelSmall, maxLines = 1)
     }
 }
@@ -712,12 +720,13 @@ private fun Palette(label: String, selected: String, sampled: List<String> = emp
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ExportOptions(workspace: Workspace, pixels: PixelChoice, close: () -> Unit,
+private fun ExportOptions(workspace: Workspace, pixels: PixelChoice, metadata: PhotoMetadata?,
+                          overrides: Map<MetadataField, String>, close: () -> Unit,
                           output: (ExportSettings, Boolean) -> Unit) {
     var settings by remember { mutableStateOf(ExportSettings()) }
     var all by remember { mutableStateOf(workspace.editing.size > 1) }
     val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val layout = WatermarkLayout.calculate(pixels.size, workspace.draft.template.frame, settings.longEdge)
+    val layout = WatermarkLayout.calculate(pixels.size, workspace.draft.template, settings.longEdge, metadata, overrides)
     ModalBottomSheet(onDismissRequest = close, sheetState = sheet, containerColor = Panel) {
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 22.dp)
             .padding(bottom = 20.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {

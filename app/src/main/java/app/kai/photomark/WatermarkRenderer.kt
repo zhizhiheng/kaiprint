@@ -59,7 +59,7 @@ class WatermarkRenderer(private val context: Context, private val photos: PhotoR
         val output = Bitmap.createBitmap(resolved.width, resolved.height, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(output)
         canvas.scale(resolved.width.toFloat() / layout.canvas.width, resolved.height.toFloat() / layout.canvas.height)
-        drawBackground(canvas, draft.frame)
+        drawBackground(canvas, draft.frame, layout)
         drawPhoto(canvas, bitmap, layout.photo)
         drawWatermark(canvas, output, layout, draft, metadata, overrides)
         return output
@@ -85,7 +85,7 @@ class WatermarkRenderer(private val context: Context, private val photos: PhotoR
             true, outputColor.androidColorSpace())
         try {
             val canvas = Canvas(output)
-            drawBackground(canvas, draft.frame, preserveTransparency = format != OutputFormat.JPEG)
+            drawBackground(canvas, draft.frame, layout, preserveTransparency = format != OutputFormat.JPEG)
             val regionEligible = choice.kind in listOf(PixelKind.STANDARD, PixelKind.COMPANION) &&
                 choice.orientation == 1 && !choice.hdr &&
                 choice.source.format in listOf(PhotoFormat.JPEG, PhotoFormat.PNG, PhotoFormat.WEBP, PhotoFormat.HEIF)
@@ -158,10 +158,11 @@ class WatermarkRenderer(private val context: Context, private val photos: PhotoR
     }
 
     private fun drawBackground(
-        canvas: Canvas, frame: Frame, preserveTransparency: Boolean = true,
+        canvas: Canvas, frame: Frame, layout: WatermarkLayout, preserveTransparency: Boolean = true,
     ) {
-        if (preserveTransparency && frame.left == 0f && frame.top == 0f && frame.right == 0f &&
-            frame.bottom == 0f && frame.ratio == FrameRatio.ORIGINAL && !frame.hairline
+        if (preserveTransparency && layout.photo.left == 0f && layout.photo.top == 0f &&
+            layout.photo.right.roundToInt() == layout.canvas.width && layout.photo.bottom.roundToInt() == layout.canvas.height &&
+            frame.ratio == FrameRatio.ORIGINAL && !frame.hairline
         ) return
         val warmWhite = 0xFFF5F2EB.toInt()
         canvas.drawColor(color(frame.color, warmWhite))

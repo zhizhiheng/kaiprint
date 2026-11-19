@@ -62,6 +62,39 @@ class BrandMarkTest {
         assertTrue(layout.area(brand).width < layout.area(data).width)
     }
 
+    @Test fun centeredFooterReservesRoomForNikonSquareAndKeepsTheCoverPhotoWhole() {
+        val source = PixelSize(900, 1200)
+        val template = Templates.frostedJournal
+        val original = template.layers.single { it.kind == LayerKind.BRAND }
+        val brand = BrandPlacement.FOOT_CENTER.place(original.copy(brandStyle = BrandStyle.SQUARE, x = .3f))
+        assertEquals(0f, brand.x)
+        assertEquals(BrandStyle.SQUARE, brand.brandStyle)
+        val placed = template.copy(layers = template.layers.map { if (it.id == brand.id) brand else it })
+        val layout = WatermarkLayout.calculate(source, placed)
+        val logoBox = layout.area(brand)
+        val parameters = layout.area(placed.layers.first { it.id == "exif" })
+        assertEquals(logoBox.bottom, parameters.top, 0f)
+        assertEquals(layout.photo.bottom, logoBox.top, 0f)
+        assertEquals(source.height.toFloat(), layout.photo.height, .01f)
+        assertEquals(layout.canvas.width.toFloat(), logoBox.width, .01f)
+        assertEquals(placed, storageJson.decodeFromString<WatermarkTemplate>(storageJson.encodeToString(placed)))
+    }
+
+    @Test fun movingFromABorderlessPhotoToAnEdgeAndBackOnlyAddsTheRequestedSpace() {
+        val source = PixelSize(1200, 800)
+        val brand = Templates.brandStamp.layers.first { it.kind == LayerKind.BRAND }
+        for (placement in BrandPlacement.entries) {
+            val moved = placement.place(brand)
+            val template = WatermarkTemplate("test", "test", layers = listOf(moved))
+            val layout = WatermarkLayout.calculate(source, template)
+            assertTrue(layout.area(moved).height > 0)
+            assertEquals(source.width.toFloat(), layout.photo.width, .01f)
+            assertEquals(placement.area == LayerArea.PHOTO, layout.canvas == source)
+            assertEquals(source, WatermarkLayout.calculate(source, template, metadata = PhotoMetadata()).canvas)
+            assertEquals(layout.canvas, WatermarkLayout.calculate(source, template.copy(layers = listOf(placement.place(moved)))).canvas)
+        }
+    }
+
     @Test fun onlyTheOriginalZrTextPresetGetsUpgraded() {
         val text = WatermarkLayer("zr", LayerKind.TEXT, "ZR", area = LayerArea.BOTTOM, anchor = Anchor.CENTER_LEFT)
         val old = WatermarkTemplate("zr", "ZR 电影卡", layers = listOf(text))

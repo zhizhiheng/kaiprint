@@ -15,6 +15,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToKey
 import androidx.exifinterface.media.ExifInterface
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -83,9 +84,12 @@ class EditorUiTest {
             compose.onNodeWithText("标注").performClick()
             compose.waitUntilAtLeastOneExists(hasText("自动 · Nikon Z", substring = true), 10_000)
             compose.onNodeWithText("横版字标").performClick().assertIsSelected()
-            compose.onNodeWithText("方形").performClick().assertIsSelected()
-            compose.onNodeWithText("镜头").performClick().assertIsSelected()
-            compose.onNodeWithText("自动 · Nikon Z", substring = true).performClick()
+            compose.onNodeWithText("尼康黄底方标").performClick().assertIsSelected()
+            compose.onNodeWithText("底边靠左", substring = true).performClick()
+            compose.onNodeWithText("底边居中").performClick()
+            compose.onNodeWithText("底边居中", substring = true).assertIsDisplayed()
+            compose.onNodeWithText("镜头").performScrollTo().performClick().assertIsSelected()
+            compose.onNodeWithText("自动 · Nikon Z", substring = true).performScrollTo().performClick()
             compose.onNodeWithText("Canon").performClick()
             compose.onNodeWithText("Canon", substring = true).assertIsDisplayed()
             compose.onNodeWithText("导出").performClick()

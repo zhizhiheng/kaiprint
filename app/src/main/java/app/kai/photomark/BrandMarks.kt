@@ -14,6 +14,26 @@ enum class BrandStyle(val label: String) {
     ORIGINAL("原版"), WORDMARK("横版字标"), SYMBOL("独立图标"), SQUARE("方形"),
 }
 
+internal enum class BrandPlacement(val label: String, val area: LayerArea, val anchor: Anchor, val column: LayerColumn) {
+    FOOT_LEFT("底边靠左", LayerArea.BOTTOM, Anchor.CENTER_LEFT, LayerColumn.LEFT),
+    FOOT_CENTER("底边居中", LayerArea.BOTTOM, Anchor.CENTER, LayerColumn.FULL),
+    FOOT_RIGHT("底边靠右", LayerArea.BOTTOM, Anchor.CENTER_RIGHT, LayerColumn.RIGHT_HALF),
+    HEAD_LEFT("顶边靠左", LayerArea.TOP, Anchor.CENTER_LEFT, LayerColumn.LEFT),
+    HEAD_CENTER("顶边居中", LayerArea.TOP, Anchor.CENTER, LayerColumn.FULL),
+    HEAD_RIGHT("顶边靠右", LayerArea.TOP, Anchor.CENTER_RIGHT, LayerColumn.RIGHT_HALF),
+    PHOTO_TL("照片左上角", LayerArea.PHOTO, Anchor.TOP_LEFT, LayerColumn.LEFT),
+    PHOTO_TR("照片右上角", LayerArea.PHOTO, Anchor.TOP_RIGHT, LayerColumn.RIGHT_HALF),
+    PHOTO_BL("照片左下角", LayerArea.PHOTO, Anchor.BOTTOM_LEFT, LayerColumn.LEFT),
+    PHOTO_BR("照片右下角", LayerArea.PHOTO, Anchor.BOTTOM_RIGHT, LayerColumn.RIGHT_HALF),
+    PHOTO_CENTER("照片中心", LayerArea.PHOTO, Anchor.CENTER, LayerColumn.FULL);
+
+    fun place(layer: WatermarkLayer) = layer.copy(area = area, anchor = anchor, column = column,
+        x = 0f, y = 0f, tile = false, reserveBrandSpace = area == LayerArea.BOTTOM || area == LayerArea.TOP)
+
+    fun matches(layer: WatermarkLayer) = layer.area == area && layer.column == column && layer.anchor == anchor &&
+        layer.x == 0f && layer.y == 0f && !layer.tile
+}
+
 internal data class BrandGraphic(val asset: String, val tintable: Boolean = true, val squareBadge: Boolean = false)
 
 @Serializable

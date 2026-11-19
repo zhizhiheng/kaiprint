@@ -60,7 +60,7 @@ class Exporter(private val app: PhotoMarkApp) {
         try {
             val info = app.photos.info(PhotoGroup(input.photo, input.companion))
             val choice = selectPixels(info, input.pixelKind, settings)
-            val layout = WatermarkLayout.calculate(choice.size, template.frame, settings.longEdge)
+            val layout = WatermarkLayout.calculate(choice.size, template, settings.longEdge, info.metadata, input.overrides)
             jobContext.ensureActive()
             val bitmap = app.renderer.renderForExport(choice, layout, template, info.metadata, input.overrides,
                 settings.colorSpace, settings.format) {
