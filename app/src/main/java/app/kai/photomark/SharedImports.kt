@@ -1,9 +1,11 @@
 package app.kai.photomark
 
 import android.content.ContentResolver
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import android.os.storage.StorageManager
 import android.provider.OpenableColumns
 import java.io.File
 import java.io.IOException
@@ -67,14 +69,17 @@ internal fun safeFileName(original: String?, mime: String?, taken: Set<String>):
  * Copies shared photos into app storage. A share only grants access while the receiving screen
  * exists, and an export can outlive it.
  */
-internal fun ContentResolver.copyShared(uris: List<Uri>, directory: File): List<PhotoSource> {
+internal fun Context.copyShared(uris: List<Uri>, directory: File): List<PhotoSource> {
     if (!directory.mkdirs() && !directory.isDirectory) throw IOException("无法创建导入目录")
+    val resolver = contentResolver
+    val storage = getSystemService(StorageManager::class.java)
+    val volume = storage.getUuidForPath(directory)
     val taken = mutableSetOf<String>()
     try {
         return uris.mapNotNull { uri ->
-            val mime = runCatching { getType(uri) }.getOrNull()
+            val mime = runCatching { resolver.getType(uri) }.getOrNull()
             val (original, length) = runCatching {
-                query(uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null)?.use {
+                resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null)?.use {
                     if (it.moveToFirst()) it.getString(0) to (if (it.isNull(1)) -1L else it.getLong(1)) else null
                 }
             }.getOrNull() ?: (uri.lastPathSegment to -1L)
@@ -82,10 +87,10 @@ internal fun ContentResolver.copyShared(uris: List<Uri>, directory: File): List<
             if (PhotoFormat.identify(name, mime) == PhotoFormat.UNKNOWN && mime?.startsWith("image/") != true) {
                 return@mapNotNull null
             }
-            if (length > 0 && directory.usableSpace - length < RESERVED_SPACE) throw IOException("ENOSPC")
+            if (length > 0 && storage.getAllocatableBytes(volume) - length < RESERVED_SPACE) throw IOException("ENOSPC")
             val target = File(directory, name)
             val copied = runCatching {
-                openInputStream(uri)?.use { input -> target.outputStream().use { input.copyTo(it) } }
+                resolver.openInputStream(uri)?.use { input -> target.outputStream().use { input.copyTo(it) } }
             }.getOrNull()
             if (copied == null || target.length() == 0L) {
                 target.delete()

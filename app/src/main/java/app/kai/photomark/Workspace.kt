@@ -181,7 +181,7 @@ class Workspace(application: Application) : AndroidViewModel(application) {
             val sources = capture("无法读取分享的照片，请检查存储空间") {
                 val keep = open + referencedSources()
                 val (removed, copied) = withContext(Dispatchers.IO) {
-                    pruneShared(root, keep) to app.contentResolver.copyShared(accepted, File(root, id()))
+                    pruneShared(root, keep) to app.copyShared(accepted, File(root, id()))
                 }
                 imported = imported.filterNot { it.uri in removed }
                 copied
