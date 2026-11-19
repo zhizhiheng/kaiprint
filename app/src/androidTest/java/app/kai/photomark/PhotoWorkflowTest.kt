@@ -214,12 +214,14 @@ class PhotoWorkflowTest {
             assertTrue(Color.alpha(bitmap.getPixel(bitmap.width / 2, bitmap.height / 2)) > 20)
             logo.outputStream().use { assertTrue(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)) }
             val template = Templates.zr.copy(layers = Templates.zr.layers +
-                WatermarkLayer("brand", LayerKind.LOGO, logoFile = logo.name))
+                WatermarkLayer("custom-logo", LayerKind.LOGO, logoFile = logo.name))
             val manager = PresetArchive(app)
             manager.write(template, Uri.fromFile(archive))
             val decoded = manager.read(Uri.fromFile(archive))
             assertEquals(template.title, decoded.title)
             assertEquals(template.layers.size, decoded.layers.size)
+            assertEquals(template.layers.first { it.kind == LayerKind.BRAND },
+                decoded.layers.first { it.kind == LayerKind.BRAND })
             imported = File(folder, requireNotNull(decoded.layers.last().logoFile))
             assertTrue(imported.isFile && logo.readBytes().contentEquals(imported.readBytes()))
         } finally {

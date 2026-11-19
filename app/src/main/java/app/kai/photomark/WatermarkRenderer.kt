@@ -7,6 +7,9 @@ import android.graphics.BitmapRegionDecoder
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Picture
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffColorFilter
 import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Typeface
@@ -16,6 +19,7 @@ import android.text.StaticLayout
 import android.text.TextPaint
 import android.text.TextUtils
 import android.util.LruCache
+import com.caverock.androidsvg.SVG
 import java.io.File
 import java.io.IOException
 import kotlin.math.ceil
@@ -25,6 +29,7 @@ import kotlin.math.roundToInt
 
 class WatermarkRenderer(private val context: Context, private val photos: PhotoRepository) {
     private val fonts = LruCache<String, Typeface>(12)
+    private val brands = LruCache<BrandMark, BrandArtwork>(24)
     private val logos = object : LruCache<String, Bitmap>(12 * 1024 * 1024) {
         override fun sizeOf(key: String, value: Bitmap) = value.allocationByteCount
     }
@@ -172,7 +177,7 @@ class WatermarkRenderer(private val context: Context, private val photos: PhotoR
     ) {
         for (layer in template.layers) {
             if (!layer.visible || layer.opacity <= 0f) continue
-            val area = layout.area(layer.area)
+            val area = layout.area(layer)
             if (area.width < 1f || area.height < 1f) continue
             val marker = getMarker(layer, area, layout.reference, metadata, overrides) ?: continue
             val state = canvas.save()
@@ -215,6 +220,15 @@ class WatermarkRenderer(private val context: Context, private val photos: PhotoR
                     this.alpha = alpha
                 }
                 Marker(w, h, layer.background, alpha) { it.drawRect(0f, 0f, w, h, paint) }
+            }
+            LayerKind.BRAND -> {
+                val brand = layer.brand.resolve(metadata, overrides) ?: return null
+                val artwork = brandArtwork(brand) ?: return null
+                val w = minOf(size, availableWidth, availableHeight * artwork.aspect)
+                val h = w / artwork.aspect
+                Marker(w, h, layer.background, alpha) { canvas ->
+                    artwork.draw(canvas, RectF(0f, 0f, w, h), brand, layer.brandTone, alpha)
+                }
             }
             LayerKind.LOGO -> {
                 val name = layer.logoFile ?: return null
@@ -338,6 +352,53 @@ class WatermarkRenderer(private val context: Context, private val photos: PhotoR
         logos.get(name)?.let { return it }
         val file = File(File(context.filesDir, "logos"), name)
         return BitmapFactory.decodeFile(file.absolutePath)?.also { logos.put(name, it) }
+    }
+
+    fun brandThumbnail(brand: BrandMark, tone: BrandTone): Bitmap? {
+        val artwork = brandArtwork(brand) ?: return null
+        val width = minOf(220f, 95f * artwork.aspect).roundToInt().coerceAtLeast(1)
+        val height = (width / artwork.aspect).roundToInt().coerceAtLeast(1)
+        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        artwork.draw(Canvas(bitmap), RectF(0f, 0f, width.toFloat(), height.toFloat()), brand, tone, 255)
+        return bitmap
+    }
+
+    private fun brandArtwork(brand: BrandMark): BrandArtwork? {
+        val name = brand.asset ?: return null
+        brands.get(brand)?.let { return it }
+        return runCatching {
+            val svg = SVG.getFromAsset(context.assets, "brands/$name.svg")
+            val view = svg.documentViewBox
+            val w = view?.width() ?: svg.documentWidth
+            val h = view?.height() ?: svg.documentHeight
+            require(w > 0f && h > 0f && w.isFinite() && h.isFinite())
+            val scale = 1024f / max(w, h)
+            BrandArtwork(
+                svg.renderToPicture((w * scale).roundToInt().coerceAtLeast(1),
+                    (h * scale).roundToInt().coerceAtLeast(1)), w / h,
+            )
+        }.getOrNull()?.also { brands.put(brand, it) }
+    }
+
+    private data class BrandArtwork(val picture: Picture, val aspect: Float) {
+        fun draw(canvas: Canvas, box: RectF, brand: BrandMark, tone: BrandTone, opacity: Int) {
+            val tint = if (!brand.tintable) null else when (tone) {
+                BrandTone.ORIGINAL -> null
+                BrandTone.LIGHT -> 0xFFF5EFE6.toInt()
+                BrandTone.DARK -> 0xFF242320.toInt()
+            }
+            if (tint == null && opacity == 255) {
+                canvas.drawPicture(picture, box)
+                return
+            }
+            val paint = Paint().apply {
+                alpha = opacity
+                if (tint != null) colorFilter = PorterDuffColorFilter(tint, PorterDuff.Mode.SRC_IN)
+            }
+            val state = canvas.saveLayer(box, paint)
+            canvas.drawPicture(picture, box)
+            canvas.restoreToCount(state)
+        }
     }
 
     private data class Marker(

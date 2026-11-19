@@ -8,6 +8,7 @@ import android.os.Build
 import android.provider.MediaStore
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -15,6 +16,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToKey
+import androidx.exifinterface.media.ExifInterface
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.rule.GrantPermissionRule
 import org.junit.Assume.assumeTrue
@@ -52,6 +54,13 @@ class EditorUiTest {
             bitmap.eraseColor(Color.rgb(70, 110, 155))
             resolver.openOutputStream(uri)!!.use { bitmap.compress(Bitmap.CompressFormat.JPEG, 90, it) }
             bitmap.recycle()
+            resolver.openFileDescriptor(uri, "rw")!!.use { file ->
+                ExifInterface(file.fileDescriptor).apply {
+                    setAttribute(ExifInterface.TAG_MAKE, "NIKON CORPORATION")
+                    setAttribute(ExifInterface.TAG_MODEL, "NIKON ZR")
+                    saveAttributes()
+                }
+            }
             resolver.update(uri, ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) }, null, null)
             compose.onNodeWithContentDescription("导入选项").performClick()
             compose.onNodeWithText("刷新相册").performClick()
@@ -71,6 +80,12 @@ class EditorUiTest {
                     true
                 }.getOrDefault(false)
             }
+            compose.onNodeWithText("标注").performClick()
+            compose.waitUntilAtLeastOneExists(hasText("自动 · Nikon Z", substring = true), 10_000)
+            compose.onNodeWithText("镜头").performClick().assertIsSelected()
+            compose.onNodeWithText("自动 · Nikon Z", substring = true).performClick()
+            compose.onNodeWithText("Canon").performClick()
+            compose.onNodeWithText("Canon", substring = true).assertIsDisplayed()
             compose.onNodeWithText("导出").performClick()
             compose.onNodeWithText("保存照片").performClick()
             compose.waitUntilAtLeastOneExists(hasText("已导出 1 / 1 张"), 30_000)

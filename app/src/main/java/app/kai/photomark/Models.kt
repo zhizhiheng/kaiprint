@@ -61,7 +61,8 @@ data class PhotoGroup(val primary: PhotoSource, val developed: PhotoSource? = nu
 @Serializable
 enum class MetadataField(val label: String) {
     MAKE("品牌"), MODEL("机型"), LENS("镜头"), FOCAL("焦距"), APERTURE("光圈"),
-    SHUTTER("快门"), ISO("ISO"), DATE("拍摄时间")
+    SHUTTER("快门"), ISO("ISO"), DATE("拍摄时间"), EXPOSURE_BIAS("曝光补偿"),
+    FOCAL_EQUIVALENT("等效焦距")
 }
 
 @Serializable
@@ -111,12 +112,17 @@ data class Frame(
 
 @Serializable
 enum class LayerKind(val label: String) {
-    TEXT("文字"), LOGO("Logo"), EXIF("拍摄参数"), LINE("细线")
+    TEXT("文字"), BRAND("品牌标志"), LOGO("自定义 Logo"), EXIF("拍摄参数"), LINE("细线")
 }
 
 @Serializable
 enum class LayerArea(val label: String) {
     PHOTO("照片内"), BOTTOM("底边"), TOP("顶边"), LEFT("左边"), RIGHT("右边"), CANVAS("全画布")
+}
+
+@Serializable
+enum class LayerColumn(val label: String) {
+    FULL("整区"), LEFT("左栏"), RIGHT("右栏"),
 }
 
 @Serializable
@@ -155,6 +161,9 @@ data class WatermarkLayer(
     val shadow: Boolean = false,
     val tile: Boolean = false,
     val visible: Boolean = true,
+    val brand: BrandMark = BrandMark.AUTO,
+    val brandTone: BrandTone = BrandTone.ORIGINAL,
+    val column: LayerColumn = LayerColumn.FULL,
 ) {
     val label get() = text.takeIf { kind == LayerKind.TEXT && it.isNotBlank() } ?: kind.label
 }
@@ -225,6 +234,16 @@ data class PixelRect(val left: Float, val top: Float, val right: Float, val bott
 }
 
 data class WatermarkLayout(val canvas: PixelSize, val photo: PixelRect, val reference: Float) {
+    fun area(layer: WatermarkLayer): PixelRect {
+        val box = area(layer.area)
+        val divider = box.left + box.width * .28f
+        return when (layer.column) {
+            LayerColumn.FULL -> box
+            LayerColumn.LEFT -> box.copy(right = divider)
+            LayerColumn.RIGHT -> box.copy(left = divider)
+        }
+    }
+
     fun area(area: LayerArea) = when (area) {
         LayerArea.PHOTO -> photo
         LayerArea.BOTTOM -> PixelRect(0f, photo.bottom, canvas.width.toFloat(), canvas.height.toFloat())

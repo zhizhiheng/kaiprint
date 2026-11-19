@@ -430,18 +430,19 @@ private val safeExif = listOf(
     ExifInterface.TAG_MAKE, ExifInterface.TAG_MODEL, ExifInterface.TAG_LENS_MODEL,
     ExifInterface.TAG_FOCAL_LENGTH, ExifInterface.TAG_F_NUMBER, ExifInterface.TAG_EXPOSURE_TIME,
     ExifInterface.TAG_PHOTOGRAPHIC_SENSITIVITY, ExifInterface.TAG_DATETIME_ORIGINAL,
+    ExifInterface.TAG_EXPOSURE_BIAS_VALUE, ExifInterface.TAG_FOCAL_LENGTH_IN_35MM_FILM,
 )
 
 private fun metadata(exif: ExifInterface?, raw: RawInfo?): PhotoMetadata {
     val tags = raw?.tags.orEmpty() + safeExif.mapNotNull { tag ->
         exif?.getAttribute(tag)?.trim()?.takeIf(String::isNotBlank)?.let { tag to it }
     }
-    fun num(tag: String): Double? {
+    fun num(tag: String, positiveOnly: Boolean = true): Double? {
         val value = tags[tag] ?: return null
         val parts = value.split('/')
         val numerator = parts[0].toDoubleOrNull() ?: return null
         val result = if (parts.size == 2) numerator / (parts[1].toDoubleOrNull() ?: return null) else numerator
-        return result.takeIf { it.isFinite() && it > 0 }
+        return result.takeIf { it.isFinite() && (!positiveOnly || it > 0) }
     }
     fun decimal(value: Double): String = DecimalFormat("0.##", DecimalFormatSymbols(Locale.ROOT)).format(value)
 
@@ -456,6 +457,13 @@ private fun metadata(exif: ExifInterface?, raw: RawInfo?): PhotoMetadata {
             put(MetadataField.SHUTTER, "$time s")
         }
         num(ExifInterface.TAG_PHOTOGRAPHIC_SENSITIVITY)?.let { put(MetadataField.ISO, "ISO ${it.roundToInt()}") }
+        num(ExifInterface.TAG_EXPOSURE_BIAS_VALUE, positiveOnly = false)?.let {
+            val sign = if (it > 0) "+" else ""
+            put(MetadataField.EXPOSURE_BIAS, "$sign${decimal(it)} EV")
+        }
+        num(ExifInterface.TAG_FOCAL_LENGTH_IN_35MM_FILM)?.let {
+            put(MetadataField.FOCAL_EQUIVALENT, "${decimal(it)} mm 等效")
+        }
         tags[ExifInterface.TAG_DATETIME_ORIGINAL]?.let {
             put(MetadataField.DATE, if (it.length >= 10) it.take(10).replace(':', '-') + it.drop(10) else it)
         }

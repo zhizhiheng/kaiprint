@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyRow
@@ -57,6 +58,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -85,7 +87,7 @@ import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
 private enum class EditorPanel(val label: String) {
-    TEMPLATES("模板"), LAYERS("图层"), FRAME("边框"), METADATA("参数")
+    TEMPLATES("模板"), LAYERS("图层"), FRAME("边框"), METADATA("标注")
 }
 
 @Composable
@@ -189,27 +191,25 @@ fun EditorScreen(workspace: Workspace, importLogo: () -> Unit, importFont: () ->
         val panelFraction = if (panel == EditorPanel.TEMPLATES) .34f else .46f
         Surface(color = Panel, modifier = Modifier.fillMaxWidth().fillMaxHeight(panelFraction),
             shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)) {
-            BoxWithConstraints(Modifier.fillMaxWidth()) {
-                val panelHeight = if (maxHeight > 770.dp) 304.dp else 254.dp
-                Column(Modifier.fillMaxWidth().height(panelHeight)) {
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 3.dp),
-                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        EditorPanel.entries.forEach { item ->
-                            TextButton({ panel = item }, modifier = Modifier.weight(1f)) {
-                                Text(item.label, color = if (item == panel) Gold else Muted,
-                                    fontWeight = if (item == panel) FontWeight.Bold else FontWeight.Medium, maxLines = 1)
-                            }
+            Column(Modifier.fillMaxSize()) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 3.dp),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    EditorPanel.entries.forEach { item ->
+                        TextButton({ panel = item }, modifier = Modifier.weight(1f)) {
+                            Text(item.label, color = if (item == panel) Gold else Muted,
+                                fontWeight = if (item == panel) FontWeight.Bold else FontWeight.Medium, maxLines = 1)
                         }
                     }
-                    HorizontalDivider(color = Stroke)
-                    Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())
-                        .padding(horizontal = 16.dp, vertical = 9.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        when (panel) {
-                            EditorPanel.TEMPLATES -> TemplatePanel(workspace, source, pixels, info?.metadata, override) { saving = true }
-                            EditorPanel.LAYERS -> LayersPanel(workspace, layer, moving, { moving = it }, importLogo, importFont)
-                            EditorPanel.FRAME -> FramePanel(workspace, source)
-                            EditorPanel.METADATA -> MetadataPanel(workspace, group, info, pixels)
-                        }
+                }
+                HorizontalDivider(color = Stroke)
+                Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp, vertical = 9.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    when (panel) {
+                        EditorPanel.TEMPLATES -> TemplatePanel(workspace, source, pixels, info?.metadata, override) { saving = true }
+                        EditorPanel.LAYERS -> LayersPanel(workspace, layer, moving, { moving = it }, importLogo, importFont,
+                            info?.metadata ?: PhotoMetadata(), override)
+                        EditorPanel.FRAME -> FramePanel(workspace, source)
+                        EditorPanel.METADATA -> MetadataPanel(workspace, group, info, pixels)
                     }
                 }
             }
@@ -267,7 +267,7 @@ private fun PreviewStage(
                         onDragCancel = { latestOnMoveCancelled() },
                     ) { change, amount ->
                         change.consume()
-                        val area = layout.area(layer.area)
+                        val area = layout.area(layer)
                         val layerWidth = size.width * area.width / layout.canvas.width
                         val layerHeight = size.height * area.height / layout.canvas.height
                         if (layerWidth > 0 && layerHeight > 0) {
@@ -354,6 +354,7 @@ private fun TemplatePanel(
 private fun LayersPanel(
     workspace: Workspace, selected: WatermarkLayer?, moving: Boolean, setMoving: (Boolean) -> Unit,
     importLogo: () -> Unit, importFont: () -> Unit,
+    metadata: PhotoMetadata, overrides: Map<MetadataField, String>,
 ) {
     val layers = workspace.draft.template.layers
     var add by remember { mutableStateOf(false) }
@@ -395,16 +396,20 @@ private fun LayersPanel(
             modifier = Modifier.fillMaxWidth(), maxLines = 4)
     }
     if (layer.kind == LayerKind.EXIF) {
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            MetadataField.entries.forEach { field ->
-                FilterChip(field in layer.fields, {
-                    val fields = if (field in layer.fields) layer.fields - field else layer.fields + field
-                    workspace.layer(layer.copy(fields = fields))
-                }, { Text(field.label) })
+        MetadataChips(layer.fields) { workspace.layer(layer.copy(fields = it)) }
+    }
+    if (layer.kind == LayerKind.BRAND) {
+        BrandControls(workspace, layer, metadata, overrides)
+        if (layer.brand.tintable) {
+            ChoiceMenu("标志颜色", layer.brandTone, BrandTone.entries, BrandTone::label) {
+                workspace.layer(layer.copy(brandTone = it))
             }
         }
     }
     ChoiceMenu("作用区域", layer.area, LayerArea.entries, { it.label }) { workspace.layer(layer.copy(area = it)) }
+    ChoiceMenu("排版范围", layer.column, LayerColumn.entries, LayerColumn::label) {
+        workspace.layer(layer.copy(column = it, x = 0f, y = 0f))
+    }
     if (layer.area != LayerArea.PHOTO && layer.area != LayerArea.CANVAS) {
         Text("在边框面板调整对应边的留白。", color = Muted, style = MaterialTheme.typography.bodySmall)
     }
@@ -417,7 +422,9 @@ private fun LayersPanel(
     SliderRow("边距", layer.margin, 0f.. .3f, { "${(it * 100).roundToInt()}%" }, workspace::finishAdjustment) { workspace.layer(layer.copy(margin = it), live = true) }
     SliderRow("透明度", layer.opacity, 0f..1f, { "${(it * 100).roundToInt()}%" }, workspace::finishAdjustment) { workspace.layer(layer.copy(opacity = it), live = true) }
     SliderRow("旋转", layer.rotation, -180f..180f, { "${it.roundToInt()}°" }, workspace::finishAdjustment) { workspace.layer(layer.copy(rotation = it), live = true) }
-    if (layer.kind != LayerKind.LOGO) Palette("水印颜色", layer.color) { workspace.layer(layer.copy(color = it)) }
+    if (layer.kind != LayerKind.LOGO && layer.kind != LayerKind.BRAND) {
+        Palette("水印颜色", layer.color) { workspace.layer(layer.copy(color = it)) }
+    }
     if (layer.kind == LayerKind.TEXT || layer.kind == LayerKind.EXIF) {
         ChoiceMenu("字体", layer.type, TypeStyle.entries, { it.label }) {
             workspace.layer(layer.copy(type = it, fontFile = null))
@@ -455,6 +462,37 @@ private fun MetadataPanel(workspace: Workspace, group: PhotoGroup, info: PhotoIn
         Text("等待读取拍摄参数", color = Muted)
         return
     }
+    val saved = workspace.draft.overrides[group.id].orEmpty()
+    val layers = workspace.draft.template.layers
+    val brandLayers = layers.filter { it.kind == LayerKind.BRAND }
+    val parameterLayers = layers.filter { it.kind == LayerKind.EXIF }
+    if (brandLayers.isEmpty()) {
+        TextButton({ workspace.addLayer(LayerKind.BRAND) }) { Text("添加品牌标志") }
+    } else for (layer in brandLayers) key(layer.id) {
+        BrandControls(workspace, layer, info.metadata, saved)
+    }
+    HorizontalDivider(color = Stroke)
+    Text("显示哪些参数", style = MaterialTheme.typography.titleSmall, color = Ink)
+    if (parameterLayers.isEmpty()) {
+        TextButton({ workspace.addLayer(LayerKind.EXIF) }) { Text("添加拍摄参数") }
+    } else {
+        var selectedId by remember(workspace.draft.template.id) { mutableStateOf<String?>(null) }
+        val active = parameterLayers.firstOrNull { it.id == selectedId }
+            ?: parameterLayers.firstOrNull { it.id == "exif" }
+            ?: parameterLayers.first()
+        if (parameterLayers.size > 1) {
+            ChoiceMenu("参数图层", active, parameterLayers, {
+                if (it.id == "camera") "机型行" else if (it.id == "exif") "拍摄参数行" else
+                    it.fields.firstOrNull()?.label ?: it.kind.label
+            }) { selectedId = it.id }
+        }
+        MetadataChips(active.fields) { workspace.layer(active.copy(fields = it)) }
+    }
+    if (workspace.editing.size > 1) {
+        Text("同一套选项应用到整组，每张照片读取自己的相机参数。", color = Muted,
+            style = MaterialTheme.typography.bodySmall)
+    }
+    HorizontalDivider(color = Stroke)
     if (pixels != null) {
         ChoiceMenu("像素来源", pixels, info.choices, { "${it.kind.label} · ${it.size}" }) {
             workspace.choosePixels(group, it.kind)
@@ -467,7 +505,6 @@ private fun MetadataPanel(workspace: Workspace, group: PhotoGroup, info: PhotoIn
     if (pixels?.kind == PixelKind.EMBEDDED) Text("此来源仅提供内嵌预览尺寸。", color = Gold,
         style = MaterialTheme.typography.bodySmall)
 
-    val saved = workspace.draft.overrides[group.id].orEmpty()
     var editing by remember(group.id) { mutableStateOf(false) }
     var draft by remember(group.id, saved) { mutableStateOf(saved) }
     TextButton({ editing = !editing }) { Text(if (editing) "收起改写参数" else "改写水印参数") }
@@ -492,6 +529,45 @@ private fun MetadataPanel(workspace: Workspace, group: PhotoGroup, info: PhotoIn
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun MetadataChips(fields: List<MetadataField>, onChange: (List<MetadataField>) -> Unit) {
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        for (field in MetadataField.entries) {
+            FilterChip(
+                selected = field in fields,
+                onClick = { onChange(if (field in fields) fields - field else fields + field) },
+                label = { Text(field.label) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun BrandControls(
+    workspace: Workspace, layer: WatermarkLayer, metadata: PhotoMetadata, overrides: Map<MetadataField, String>,
+) {
+    val detected = BrandMark.AUTO.resolve(metadata, overrides)
+    val current = layer.brand.resolve(metadata, overrides)
+    val thumbnail by produceState<Bitmap?>(null, current) {
+        value = null
+        value = if (current == null) null else withContext(Dispatchers.Default) {
+            workspace.app.renderer.brandThumbnail(current, BrandTone.LIGHT)
+        }
+    }
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        thumbnail?.let { logo ->
+            Image(logo.asImageBitmap(), current?.label, Modifier.size(62.dp, 29.dp), contentScale = ContentScale.Fit)
+        }
+        Box(Modifier.weight(1f)) {
+            ChoiceMenu("品牌标志", layer.brand, BrandMark.entries, { mark ->
+                if (mark == BrandMark.AUTO) "自动 · ${detected?.label ?: "未识别"}" else mark.label
+            }) { workspace.layer(layer.copy(brand = it)) }
+        }
+    }
+}
+
 @Composable
 private fun <T> ChoiceMenu(label: String, current: T, entries: List<T>, display: (T) -> String, onChoose: (T) -> Unit) {
     var open by remember { mutableStateOf(false) }
@@ -499,7 +575,7 @@ private fun <T> ChoiceMenu(label: String, current: T, entries: List<T>, display:
         Text(label, color = Muted, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
         Box {
             TextButton({ open = true }) { Text(display(current) + if (entries.size > 1) "  ▾" else "") }
-            DropdownMenu(open, { open = false }) {
+            DropdownMenu(open, { open = false }, modifier = Modifier.heightIn(max = 400.dp)) {
                 entries.forEach { item -> DropdownMenuItem(text = { Text(display(item)) }, onClick = { onChoose(item); open = false }) }
             }
         }

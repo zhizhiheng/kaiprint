@@ -216,7 +216,7 @@ class Workspace(application: Application) : AndroidViewModel(application) {
             }.getOrNull() ?: return
             editing = saved.photos.map { PhotoGroup(it.photo, it.companion) }
             activeIndex = saved.active.coerceIn(0, maxOf(0, editing.lastIndex))
-            draft = saved.draft
+            draft = saved.draft.copy(template = Templates.upgradeLegacyZr(saved.draft.template))
         }
         if (editing.isNotEmpty()) screen = Screen.EDITOR
     }
@@ -258,6 +258,8 @@ class Workspace(application: Application) : AndroidViewModel(application) {
             LayerKind.EXIF -> WatermarkLayer(id(), kind,
                 fields = listOf(MetadataField.MODEL, MetadataField.APERTURE, MetadataField.SHUTTER, MetadataField.ISO),
                 anchor = Anchor.BOTTOM_LEFT, type = TypeStyle.MONO, shadow = true)
+            LayerKind.BRAND -> WatermarkLayer(id(), kind, size = .16f, anchor = Anchor.BOTTOM_LEFT,
+                brandTone = BrandTone.LIGHT)
             LayerKind.LOGO -> WatermarkLayer(id(), kind, logoFile = logo, size = .16f)
             LayerKind.LINE -> WatermarkLayer(id(), kind, size = .16f, anchor = Anchor.BOTTOM_LEFT)
         }

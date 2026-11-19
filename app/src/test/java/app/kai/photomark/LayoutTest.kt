@@ -54,6 +54,6 @@ class LayoutTest {
     @Test fun savedTemplateRoundTripPreservesLayerOrder() {
         val template = Templates.zr
         assertEquals(template, storageJson.decodeFromString<WatermarkTemplate>(storageJson.encodeToString(template)))
-        assertEquals(6, Templates.all.size)
+        assertEquals(7, Templates.all.size)
     }
 }
