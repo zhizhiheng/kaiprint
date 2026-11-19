@@ -46,9 +46,9 @@ class WatermarkRenderer(private val context: Context, private val photos: PhotoR
         val output = Bitmap.createBitmap(resolved.width, resolved.height, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(output)
         canvas.scale(resolved.width.toFloat() / layout.canvas.width, resolved.height.toFloat() / layout.canvas.height)
-        drawBackground(canvas, layout, draft.frame)
+        drawBackground(canvas, draft.frame)
         drawPhoto(canvas, bitmap, layout.photo)
-        drawLayers(canvas, layout, draft, metadata, overrides)
+        drawWatermark(canvas, output, layout, draft, metadata, overrides)
         return output
     }
 
@@ -72,7 +72,7 @@ class WatermarkRenderer(private val context: Context, private val photos: PhotoR
             true, outputColor.androidColorSpace())
         try {
             val canvas = Canvas(output)
-            drawBackground(canvas, layout, draft.frame, preserveTransparency = format != OutputFormat.JPEG)
+            drawBackground(canvas, draft.frame, preserveTransparency = format != OutputFormat.JPEG)
             val regionEligible = choice.kind in listOf(PixelKind.STANDARD, PixelKind.COMPANION) &&
                 choice.orientation == 1 && !choice.hdr &&
                 choice.source.format in listOf(PhotoFormat.JPEG, PhotoFormat.PNG, PhotoFormat.WEBP, PhotoFormat.HEIF)
@@ -88,7 +88,7 @@ class WatermarkRenderer(private val context: Context, private val photos: PhotoR
                 }
             }
             checkpoint()
-            drawLayers(canvas, layout, draft, metadata, overrides)
+            drawWatermark(canvas, output, layout, draft, metadata, overrides)
             return output
         } catch (error: Throwable) {
             output.recycle()
@@ -145,27 +145,85 @@ class WatermarkRenderer(private val context: Context, private val photos: PhotoR
     }
 
     private fun drawBackground(
-        canvas: Canvas, layout: WatermarkLayout, frame: Frame, preserveTransparency: Boolean = true,
+        canvas: Canvas, frame: Frame, preserveTransparency: Boolean = true,
     ) {
         if (preserveTransparency && frame.left == 0f && frame.top == 0f && frame.right == 0f &&
             frame.bottom == 0f && frame.ratio == FrameRatio.ORIGINAL && !frame.hairline
         ) return
         val warmWhite = 0xFFF5F2EB.toInt()
         canvas.drawColor(color(frame.color, warmWhite))
-        if (frame.hairline) {
-            val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = 0x50484540
-                style = Paint.Style.STROKE
-                strokeWidth = max(1f, layout.reference * .00075f)
-            }
-            val rect = layout.photo.asRect()
-            rect.inset(-paint.strokeWidth * 2, -paint.strokeWidth * 2)
-            canvas.drawRect(rect, paint)
-        }
     }
 
     private fun drawPhoto(canvas: Canvas, bitmap: Bitmap, photo: PixelRect) {
         canvas.drawBitmap(bitmap, null, photo.asRect(), Paint(Paint.FILTER_BITMAP_FLAG))
+    }
+
+    private fun drawWatermark(
+        canvas: Canvas,
+        output: Bitmap,
+        layout: WatermarkLayout,
+        template: WatermarkTemplate,
+        metadata: PhotoMetadata,
+        overrides: Map<MetadataField, String>,
+    ) {
+        val frost = template.frame.background == FrameBackground.FROSTED
+        val paletteCount = template.layers.filter { it.kind == LayerKind.PALETTE && it.visible && it.opacity > 0f }
+            .maxOfOrNull { it.paletteCount.coerceIn(3, 6) }
+        val palette = if (frost || paletteCount != null) {
+            val sample = photoSample(output, layout)
+            try {
+                val colors = paletteCount?.let { photoPalette(sample, it) }.orEmpty()
+                if (frost) drawFrostedFrame(canvas, layout, template.frame, sample)
+                colors
+            } finally {
+                sample.recycle()
+            }
+        } else emptyList()
+        if (template.frame.hairline) drawFrameOutline(canvas, layout)
+        val captions = template.captions.filterKeys { it in MetadataField.captionFields }
+        val shown = if (captions.isEmpty()) metadata else metadata.copy(values = metadata.values + captions)
+        drawLayers(canvas, layout, template, shown, overrides, palette)
+    }
+
+    private fun photoSample(output: Bitmap, layout: WatermarkLayout): Bitmap {
+        val scaleX = output.width.toFloat() / layout.canvas.width
+        val scaleY = output.height.toFloat() / layout.canvas.height
+        val left = (layout.photo.left * scaleX).roundToInt().coerceIn(0, output.width - 1)
+        val top = (layout.photo.top * scaleY).roundToInt().coerceIn(0, output.height - 1)
+        val right = (layout.photo.right * scaleX).roundToInt().coerceIn(left + 1, output.width)
+        val bottom = (layout.photo.bottom * scaleY).roundToInt().coerceIn(top + 1, output.height)
+        val size = PixelSize(right - left, bottom - top).fit(112)
+        return Bitmap.createBitmap(size.width, size.height, Bitmap.Config.ARGB_8888).apply {
+            Canvas(this).drawBitmap(output, Rect(left, top, right, bottom),
+                Rect(0, 0, width, height), Paint(Paint.FILTER_BITMAP_FLAG))
+        }
+    }
+
+    private fun drawFrostedFrame(canvas: Canvas, layout: WatermarkLayout, frame: Frame, sample: Bitmap) {
+        blurPhotoSample(sample, frame.blur)
+        val scale = max(layout.canvas.width.toFloat() / sample.width, layout.canvas.height.toFloat() / sample.height)
+        val width = sample.width * scale
+        val height = sample.height * scale
+        val left = (layout.canvas.width - width) / 2f
+        val top = (layout.canvas.height - height) / 2f
+        val state = canvas.save()
+        canvas.clipOutRect(layout.photo.asRect())
+        canvas.drawBitmap(sample, null, RectF(left, top, left + width, top + height), Paint(Paint.FILTER_BITMAP_FLAG))
+        val tint = color(frame.color, 0xFF16232F.toInt())
+        val alpha = (255 * frame.tintStrength.coerceIn(0f, .9f)).roundToInt()
+        canvas.drawColor((tint and 0xFFFFFF) or (alpha shl 24))
+        canvas.restoreToCount(state)
+    }
+
+    private fun drawFrameOutline(canvas: Canvas, layout: WatermarkLayout) {
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = 0x50484540
+            style = Paint.Style.STROKE
+            strokeWidth = max(1f, layout.reference * .00075f)
+        }
+        val rect = layout.photo.asRect()
+        rect.inset(-paint.strokeWidth * 2, -paint.strokeWidth * 2)
+        canvas.drawRect(rect, paint)
     }
 
     private fun drawLayers(
@@ -174,12 +232,13 @@ class WatermarkRenderer(private val context: Context, private val photos: PhotoR
         template: WatermarkTemplate,
         metadata: PhotoMetadata,
         overrides: Map<MetadataField, String>,
+        palette: List<Int>,
     ) {
         for (layer in template.layers) {
             if (!layer.visible || layer.opacity <= 0f) continue
             val area = layout.area(layer)
             if (area.width < 1f || area.height < 1f) continue
-            val marker = getMarker(layer, area, layout.reference, metadata, overrides) ?: continue
+            val marker = getMarker(layer, area, layout.reference, metadata, overrides, palette) ?: continue
             val state = canvas.save()
             canvas.clipRect(area.asRect())
             if (layer.tile) {
@@ -204,6 +263,7 @@ class WatermarkRenderer(private val context: Context, private val photos: PhotoR
         reference: Float,
         metadata: PhotoMetadata,
         overrides: Map<MetadataField, String>,
+        palette: List<Int>,
     ): Marker? {
         val alpha = (layer.opacity.coerceIn(0f, 1f) * 255).roundToInt()
         val margin = layer.margin.coerceIn(0f, .3f) * reference
@@ -240,6 +300,23 @@ class WatermarkRenderer(private val context: Context, private val photos: PhotoR
                 val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply { this.alpha = alpha }
                 Marker(w, h, layer.background, alpha) {
                     it.drawBitmap(bitmap, null, RectF(0f, 0f, w, h), paint)
+                }
+            }
+            LayerKind.PALETTE -> {
+                val colors = palette.take(layer.paletteCount.coerceIn(3, 6)).sortedBy(Color::luminance)
+                if (colors.isEmpty()) return null
+                val w = minOf(size, availableWidth)
+                val h = minOf(w * .105f, availableHeight)
+                val gap = if (layer.paletteStyle == PaletteStyle.BLOCKS) w * .025f else 0f
+                val blockWidth = (w - (colors.size - 1) * gap) / colors.size
+                val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+                Marker(w, h, layer.background, alpha) { canvas ->
+                    colors.forEachIndexed { index, swatch ->
+                        val left = index * (blockWidth + gap)
+                        paint.color = swatch
+                        paint.alpha = alpha
+                        canvas.drawRect(left, 0f, left + blockWidth, h, paint)
+                    }
                 }
             }
             LayerKind.TEXT, LayerKind.EXIF -> {

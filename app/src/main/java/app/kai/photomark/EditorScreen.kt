@@ -403,6 +403,14 @@ private fun LayersPanel(
     if (layer.kind == LayerKind.BRAND) {
         BrandControls(workspace, layer, metadata, overrides)
     }
+    if (layer.kind == LayerKind.PALETTE) {
+        ChoiceMenu("色卡样式", layer.paletteStyle, PaletteStyle.entries, PaletteStyle::label) {
+            workspace.layer(layer.copy(paletteStyle = it))
+        }
+        ChoiceMenu("最多色数", layer.paletteCount.coerceIn(3, 6), (3..6).toList(), Int::toString) {
+            workspace.layer(layer.copy(paletteCount = it))
+        }
+    }
     ChoiceMenu("作用区域", layer.area, LayerArea.entries, { it.label }) { workspace.layer(layer.copy(area = it)) }
     ChoiceMenu("排版范围", layer.column, LayerColumn.entries, LayerColumn::label) {
         workspace.layer(layer.copy(column = it, x = 0f, y = 0f))
@@ -419,7 +427,7 @@ private fun LayersPanel(
     SliderRow("边距", layer.margin, 0f.. .3f, { "${(it * 100).roundToInt()}%" }, workspace::finishAdjustment) { workspace.layer(layer.copy(margin = it), live = true) }
     SliderRow("透明度", layer.opacity, 0f..1f, { "${(it * 100).roundToInt()}%" }, workspace::finishAdjustment) { workspace.layer(layer.copy(opacity = it), live = true) }
     SliderRow("旋转", layer.rotation, -180f..180f, { "${it.roundToInt()}°" }, workspace::finishAdjustment) { workspace.layer(layer.copy(rotation = it), live = true) }
-    if (layer.kind != LayerKind.LOGO && layer.kind != LayerKind.BRAND) {
+    if (layer.kind in listOf(LayerKind.TEXT, LayerKind.EXIF, LayerKind.LINE)) {
         Palette("水印颜色", layer.color) { workspace.layer(layer.copy(color = it)) }
     }
     if (layer.kind == LayerKind.TEXT || layer.kind == LayerKind.EXIF) {
@@ -444,9 +452,20 @@ private fun FramePanel(workspace: Workspace, bitmap: Bitmap?) {
     }
     val frame = workspace.draft.template.frame
     ChoiceMenu("画布比例", frame.ratio, FrameRatio.entries, { it.label }) { workspace.frame(frame.copy(ratio = it)) }
+    ChoiceMenu("边框背景", frame.background, FrameBackground.entries, FrameBackground::label) {
+        workspace.frame(frame.copy(background = it))
+    }
     Palette("边框颜色", frame.color, swatches) { workspace.frame(frame.copy(color = it)) }
     Toggle("照片细线边缘", frame.hairline) { workspace.frame(frame.copy(hairline = it)) }
     val pct: (Float) -> String = { "${(it * 100).roundToInt()}%" }
+    if (frame.background == FrameBackground.FROSTED) {
+        SliderRow("模糊程度", frame.blur, .02f.. .24f, pct, workspace::finishAdjustment) {
+            workspace.frame(frame.copy(blur = it), live = true)
+        }
+        SliderRow("底色强度", frame.tintStrength, 0f.. .9f, pct, workspace::finishAdjustment) {
+            workspace.frame(frame.copy(tintStrength = it), live = true)
+        }
+    }
     SliderRow("上边", frame.top, 0f.. .75f, pct, workspace::finishAdjustment) { workspace.frame(frame.copy(top = it), live = true) }
     SliderRow("下边", frame.bottom, 0f.. .75f, pct, workspace::finishAdjustment) { workspace.frame(frame.copy(bottom = it), live = true) }
     SliderRow("左边", frame.left, 0f.. .75f, pct, workspace::finishAdjustment) { workspace.frame(frame.copy(left = it), live = true) }
@@ -489,6 +508,21 @@ private fun MetadataPanel(workspace: Workspace, group: PhotoGroup, info: PhotoIn
         Text("同一套选项应用到整组，每张照片读取自己的相机参数。", color = Muted,
             style = MaterialTheme.typography.bodySmall)
     }
+    var showingCaptions by remember { mutableStateOf(false) }
+    TextButton({ showingCaptions = !showingCaptions }) {
+        Text(if (showingCaptions) "收起标题、署名和地点" else "标题、署名和地点")
+    }
+    val captions = workspace.draft.template.captions
+    if (showingCaptions) {
+        for (field in MetadataField.captionFields) {
+            OutlinedTextField(
+                captions[field].orEmpty(), { workspace.caption(field, it) },
+                label = { Text(field.label) }, modifier = Modifier.fillMaxWidth(), singleLine = true,
+            )
+        }
+        Text("随模板保存。单张照片可以在下方单独改写。", color = Muted,
+            style = MaterialTheme.typography.bodySmall)
+    }
     HorizontalDivider(color = Stroke)
     if (pixels != null) {
         ChoiceMenu("像素来源", pixels, info.choices, { "${it.kind.label} · ${it.size}" }) {
@@ -507,11 +541,11 @@ private fun MetadataPanel(workspace: Workspace, group: PhotoGroup, info: PhotoIn
     TextButton({ editing = !editing }) { Text(if (editing) "收起改写参数" else "改写水印参数") }
     for (field in MetadataField.entries) {
         if (editing) {
-            OutlinedTextField(draft[field] ?: info.metadata.values[field].orEmpty(), { value ->
+            OutlinedTextField(draft[field] ?: captions[field] ?: info.metadata.values[field].orEmpty(), { value ->
                 draft = draft + (field to value.take(120))
             }, label = { Text(field.label) }, modifier = Modifier.fillMaxWidth(), singleLine = true)
         } else {
-            val value = saved[field] ?: info.metadata.values[field] ?: continue
+            val value = saved[field] ?: captions[field] ?: info.metadata.values[field] ?: continue
             if (value.isNotBlank()) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(field.label, modifier = Modifier.weight(.32f), color = Muted, style = MaterialTheme.typography.bodySmall)

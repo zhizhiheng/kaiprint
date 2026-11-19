@@ -3,7 +3,6 @@ package app.kai.photomark
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
-import android.graphics.Color
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.net.Uri
@@ -13,7 +12,6 @@ import java.io.File
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
-import java.util.Locale
 import java.util.UUID
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
@@ -55,29 +53,6 @@ internal fun renderSvg(input: InputStream): Bitmap {
     svg.setDocumentHeight("100%")
     svg.renderToCanvas(Canvas(bitmap), RectF(0f, 0f, bitmap.width.toFloat(), bitmap.height.toFloat()))
     return bitmap
-}
-
-internal fun sampledColors(bitmap: Bitmap): List<String> {
-    val counts = mutableMapOf<Int, IntArray>()
-    val step = (maxOf(bitmap.width, bitmap.height) / 56).coerceAtLeast(1)
-    for (y in 0 until bitmap.height step step) {
-        for (x in 0 until bitmap.width step step) {
-            val pixel = bitmap.getPixel(x, y)
-            if (Color.alpha(pixel) < 127) continue
-            val r = Color.red(pixel)
-            val g = Color.green(pixel)
-            val b = Color.blue(pixel)
-            val key = (r / 48) * 36 + (g / 48) * 6 + b / 48
-            val count = counts.getOrPut(key) { IntArray(4) }
-            count[0]++
-            count[1] += r
-            count[2] += g
-            count[3] += b
-        }
-    }
-    return counts.values.sortedByDescending { it[0] }.take(4).map {
-        String.format(Locale.ROOT, "#%02X%02X%02X", it[1] / it[0], it[2] / it[0], it[3] / it[0])
-    }
 }
 
 class PresetArchive(private val context: Context) {

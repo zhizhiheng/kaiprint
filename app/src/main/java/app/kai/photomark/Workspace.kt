@@ -227,12 +227,19 @@ class Workspace(application: Application) : AndroidViewModel(application) {
     }
 
     fun apply(template: WatermarkTemplate) {
-        edit(draft.copy(template = template))
+        val selected = if (template in Templates.all) template.copy(captions = draft.template.captions) else template
+        edit(draft.copy(template = selected))
         activeLayer = null
         if (editing.isNotEmpty()) screen = Screen.EDITOR
     }
 
     fun frame(frame: Frame, live: Boolean = false) = edit(draft.copy(template = draft.template.copy(frame = frame)), live)
+
+    fun caption(field: MetadataField, value: String) {
+        val template = draft.template
+        val captions = if (value.isEmpty()) template.captions - field else template.captions + (field to value.take(120))
+        edit(draft.copy(template = template.copy(captions = captions)))
+    }
 
     fun layer(layer: WatermarkLayer, live: Boolean = false) {
         val layers = draft.template.layers.map { if (it.id == layer.id) layer else it }
@@ -262,6 +269,7 @@ class Workspace(application: Application) : AndroidViewModel(application) {
                 brandTone = BrandTone.LIGHT)
             LayerKind.LOGO -> WatermarkLayer(id(), kind, logoFile = logo, size = .16f)
             LayerKind.LINE -> WatermarkLayer(id(), kind, size = .16f, anchor = Anchor.BOTTOM_LEFT)
+            LayerKind.PALETTE -> WatermarkLayer(id(), kind, size = .38f, anchor = Anchor.BOTTOM_RIGHT)
         }
         edit(draft.copy(template = draft.template.copy(layers = draft.template.layers + layer)))
         activeLayer = layer.id

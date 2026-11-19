@@ -62,7 +62,11 @@ data class PhotoGroup(val primary: PhotoSource, val developed: PhotoSource? = nu
 enum class MetadataField(val label: String) {
     MAKE("品牌"), MODEL("机型"), LENS("镜头"), FOCAL("焦距"), APERTURE("光圈"),
     SHUTTER("快门"), ISO("ISO"), DATE("拍摄时间"), EXPOSURE_BIAS("曝光补偿"),
-    FOCAL_EQUIVALENT("等效焦距")
+    FOCAL_EQUIVALENT("等效焦距"), TITLE("作品标题"), AUTHOR("署名"), LOCATION("地点");
+
+    companion object {
+        val captionFields = listOf(TITLE, AUTHOR, LOCATION)
+    }
 }
 
 @Serializable
@@ -100,6 +104,11 @@ enum class FrameRatio(val label: String, val across: Int, val down: Int) {
 }
 
 @Serializable
+enum class FrameBackground(val label: String) {
+    SOLID("纯色"), FROSTED("照片毛玻璃"),
+}
+
+@Serializable
 data class Frame(
     val left: Float = 0f,
     val top: Float = 0f,
@@ -108,11 +117,19 @@ data class Frame(
     val color: String = "#F5F1E9",
     val ratio: FrameRatio = FrameRatio.ORIGINAL,
     val hairline: Boolean = false,
+    val background: FrameBackground = FrameBackground.SOLID,
+    val blur: Float = .08f,
+    val tintStrength: Float = .48f,
 )
 
 @Serializable
 enum class LayerKind(val label: String) {
-    TEXT("文字"), BRAND("品牌标志"), LOGO("自定义 Logo"), EXIF("拍摄参数"), LINE("细线")
+    TEXT("文字"), BRAND("品牌标志"), LOGO("自定义 Logo"), EXIF("拍摄参数"), LINE("细线"), PALETTE("照片色卡")
+}
+
+@Serializable
+enum class PaletteStyle(val label: String) {
+    STRIP("连续色带"), BLOCKS("分隔色块"),
 }
 
 @Serializable
@@ -122,7 +139,7 @@ enum class LayerArea(val label: String) {
 
 @Serializable
 enum class LayerColumn(val label: String) {
-    FULL("整区"), LEFT("左栏"), RIGHT("右栏"),
+    FULL("整区"), LEFT("左栏"), RIGHT("右栏"), LEFT_HALF("左半区"), RIGHT_HALF("右半区"),
 }
 
 @Serializable
@@ -165,8 +182,14 @@ data class WatermarkLayer(
     val brandTone: BrandTone = BrandTone.ORIGINAL,
     val column: LayerColumn = LayerColumn.FULL,
     val brandStyle: BrandStyle = BrandStyle.ORIGINAL,
+    val paletteStyle: PaletteStyle = PaletteStyle.STRIP,
+    val paletteCount: Int = 5,
 ) {
-    val label get() = text.takeIf { kind == LayerKind.TEXT && it.isNotBlank() } ?: kind.label
+    val label get() = when (kind) {
+        LayerKind.TEXT -> text.takeIf(String::isNotBlank) ?: kind.label
+        LayerKind.EXIF -> fields.singleOrNull()?.label ?: kind.label
+        else -> kind.label
+    }
 }
 
 @Serializable
@@ -176,6 +199,7 @@ data class WatermarkTemplate(
     val frame: Frame = Frame(),
     val layers: List<WatermarkLayer> = emptyList(),
     val version: Int = 1,
+    val captions: Map<MetadataField, String> = emptyMap(),
 )
 
 @Serializable
@@ -242,6 +266,8 @@ data class WatermarkLayout(val canvas: PixelSize, val photo: PixelRect, val refe
             LayerColumn.FULL -> box
             LayerColumn.LEFT -> box.copy(right = divider)
             LayerColumn.RIGHT -> box.copy(left = divider)
+            LayerColumn.LEFT_HALF -> box.copy(right = box.left + box.width / 2f)
+            LayerColumn.RIGHT_HALF -> box.copy(left = box.left + box.width / 2f)
         }
     }
 

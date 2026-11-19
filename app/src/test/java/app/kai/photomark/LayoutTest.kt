@@ -52,8 +52,11 @@ class LayoutTest {
     }
 
     @Test fun savedTemplateRoundTripPreservesLayerOrder() {
-        val template = Templates.zr
-        assertEquals(template, storageJson.decodeFromString<WatermarkTemplate>(storageJson.encodeToString(template)))
-        assertEquals(7, Templates.all.size)
+        for (template in Templates.all) {
+            assertEquals(template, storageJson.decodeFromString<WatermarkTemplate>(storageJson.encodeToString(template)))
+        }
+        val personalized = Templates.colorAtlas.copy(captions = mapOf(MetadataField.AUTHOR to "摄影师"))
+        assertEquals(personalized, storageJson.decodeFromString<WatermarkTemplate>(storageJson.encodeToString(personalized)))
+        assertEquals(12, Templates.all.map { it.id }.distinct().size)
     }
 }
