@@ -82,6 +82,8 @@ class EditorUiTest {
             }
             compose.onNodeWithText("标注").performClick()
             compose.waitUntilAtLeastOneExists(hasText("自动 · Nikon Z", substring = true), 10_000)
+            compose.onNodeWithText("横版字标").performClick().assertIsSelected()
+            compose.onNodeWithText("方形").performClick().assertIsSelected()
             compose.onNodeWithText("镜头").performClick().assertIsSelected()
             compose.onNodeWithText("自动 · Nikon Z", substring = true).performClick()
             compose.onNodeWithText("Canon").performClick()

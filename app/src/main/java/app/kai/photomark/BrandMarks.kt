@@ -10,6 +10,13 @@ enum class BrandTone(val label: String) {
 }
 
 @Serializable
+enum class BrandStyle(val label: String) {
+    ORIGINAL("原版"), WORDMARK("横版字标"), SYMBOL("独立图标"), SQUARE("方形"),
+}
+
+internal data class BrandGraphic(val asset: String, val tintable: Boolean = true, val squareBadge: Boolean = false)
+
+@Serializable
 enum class BrandMark(val label: String, val asset: String? = null, val tintable: Boolean = true) {
     AUTO("按照片自动识别"),
     NONE("隐藏标志"),
@@ -34,6 +41,34 @@ enum class BrandMark(val label: String, val asset: String? = null, val tintable:
     INSTA360("Insta360", "insta360"),
     HUAWEI("HUAWEI", "huawei", false),
     XIAOMI("Xiaomi", "xiaomi");
+
+    internal fun graphic(style: BrandStyle): BrandGraphic? {
+        val original = BrandGraphic(asset ?: return null, tintable)
+        return when (style) {
+            BrandStyle.ORIGINAL -> original
+            BrandStyle.WORDMARK -> when (this) {
+                NIKON, NIKON_Z -> BrandGraphic("nikon-wordmark")
+                SONY_ALPHA -> BrandGraphic("sony")
+                FUJIFILM -> BrandGraphic("fujifilm-wordmark")
+                LUMIX -> BrandGraphic("panasonic")
+                LEICA -> BrandGraphic("leica-wordmark")
+                OLYMPUS -> BrandGraphic("olympus-wordmark")
+                GOPRO -> BrandGraphic("gopro-wordmark")
+                HUAWEI -> BrandGraphic("huawei-wordmark")
+                else -> original
+            }
+            BrandStyle.SYMBOL -> when (this) {
+                HUAWEI -> BrandGraphic("huawei-symbol")
+                else -> original
+            }
+            BrandStyle.SQUARE -> when (this) {
+                NIKON, NIKON_Z -> BrandGraphic("nikon", tintable = false)
+                OM_SYSTEM -> BrandGraphic("om-system-square")
+                XIAOMI -> original
+                else -> original.copy(squareBadge = true)
+            }
+        }
+    }
 
     fun resolve(metadata: PhotoMetadata, overrides: Map<MetadataField, String>): BrandMark? =
         when (this) {

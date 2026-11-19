@@ -29,7 +29,7 @@ import kotlin.math.roundToInt
 
 class WatermarkRenderer(private val context: Context, private val photos: PhotoRepository) {
     private val fonts = LruCache<String, Typeface>(12)
-    private val brands = LruCache<BrandMark, BrandArtwork>(24)
+    private val brands = LruCache<String, BrandArtwork>(32)
     private val logos = object : LruCache<String, Bitmap>(12 * 1024 * 1024) {
         override fun sizeOf(key: String, value: Bitmap) = value.allocationByteCount
     }
@@ -223,11 +223,13 @@ class WatermarkRenderer(private val context: Context, private val photos: PhotoR
             }
             LayerKind.BRAND -> {
                 val brand = layer.brand.resolve(metadata, overrides) ?: return null
-                val artwork = brandArtwork(brand) ?: return null
-                val w = minOf(size, availableWidth, availableHeight * artwork.aspect)
-                val h = w / artwork.aspect
+                val graphic = brand.graphic(layer.brandStyle) ?: return null
+                val artwork = brandArtwork(graphic.asset) ?: return null
+                val aspect = artwork.aspectFor(graphic)
+                val w = minOf(size, availableWidth, availableHeight * aspect)
+                val h = w / aspect
                 Marker(w, h, layer.background, alpha) { canvas ->
-                    artwork.draw(canvas, RectF(0f, 0f, w, h), brand, layer.brandTone, alpha)
+                    artwork.draw(canvas, RectF(0f, 0f, w, h), graphic, layer.brandTone, alpha)
                 }
             }
             LayerKind.LOGO -> {
@@ -354,18 +356,19 @@ class WatermarkRenderer(private val context: Context, private val photos: PhotoR
         return BitmapFactory.decodeFile(file.absolutePath)?.also { logos.put(name, it) }
     }
 
-    fun brandThumbnail(brand: BrandMark, tone: BrandTone): Bitmap? {
-        val artwork = brandArtwork(brand) ?: return null
-        val width = minOf(220f, 95f * artwork.aspect).roundToInt().coerceAtLeast(1)
-        val height = (width / artwork.aspect).roundToInt().coerceAtLeast(1)
+    fun brandThumbnail(brand: BrandMark, tone: BrandTone, style: BrandStyle = BrandStyle.ORIGINAL): Bitmap? {
+        val graphic = brand.graphic(style) ?: return null
+        val artwork = brandArtwork(graphic.asset) ?: return null
+        val aspect = artwork.aspectFor(graphic)
+        val width = minOf(240f, 112f * aspect).roundToInt().coerceAtLeast(1)
+        val height = (width / aspect).roundToInt().coerceAtLeast(1)
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-        artwork.draw(Canvas(bitmap), RectF(0f, 0f, width.toFloat(), height.toFloat()), brand, tone, 255)
+        artwork.draw(Canvas(bitmap), RectF(0f, 0f, width.toFloat(), height.toFloat()), graphic, tone, 255)
         return bitmap
     }
 
-    private fun brandArtwork(brand: BrandMark): BrandArtwork? {
-        val name = brand.asset ?: return null
-        brands.get(brand)?.let { return it }
+    private fun brandArtwork(name: String): BrandArtwork? {
+        brands.get(name)?.let { return it }
         return runCatching {
             val svg = SVG.getFromAsset(context.assets, "brands/$name.svg")
             val view = svg.documentViewBox
@@ -377,16 +380,36 @@ class WatermarkRenderer(private val context: Context, private val photos: PhotoR
                 svg.renderToPicture((w * scale).roundToInt().coerceAtLeast(1),
                     (h * scale).roundToInt().coerceAtLeast(1)), w / h,
             )
-        }.getOrNull()?.also { brands.put(brand, it) }
+        }.getOrNull()?.also { brands.put(name, it) }
     }
 
     private data class BrandArtwork(val picture: Picture, val aspect: Float) {
-        fun draw(canvas: Canvas, box: RectF, brand: BrandMark, tone: BrandTone, opacity: Int) {
-            val tint = if (!brand.tintable) null else when (tone) {
+        fun aspectFor(graphic: BrandGraphic) = if (graphic.squareBadge) 1f else aspect
+
+        fun draw(canvas: Canvas, box: RectF, graphic: BrandGraphic, tone: BrandTone, opacity: Int) {
+            val tint = if (!graphic.tintable) null else when (tone) {
                 BrandTone.ORIGINAL -> null
-                BrandTone.LIGHT -> 0xFFF5EFE6.toInt()
-                BrandTone.DARK -> 0xFF242320.toInt()
+                BrandTone.LIGHT -> lightInk
+                BrandTone.DARK -> darkInk
             }
+            if (!graphic.squareBadge) {
+                drawPicture(canvas, box, tint, opacity)
+                return
+            }
+            val state = if (opacity == 255) canvas.save()
+                else canvas.saveLayer(box, Paint().apply { alpha = opacity })
+            val backing = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = if (tint == lightInk) darkInk else lightInk }
+            val radius = box.width() * .12f
+            canvas.drawRoundRect(box, radius, radius, backing)
+            val w = minOf(box.width() * .76f, box.height() * .63f * aspect)
+            val h = w / aspect
+            val x = box.centerX()
+            val y = box.centerY()
+            drawPicture(canvas, RectF(x - w / 2, y - h / 2, x + w / 2, y + h / 2), tint, 255)
+            canvas.restoreToCount(state)
+        }
+
+        private fun drawPicture(canvas: Canvas, box: RectF, tint: Int?, opacity: Int) {
             if (tint == null && opacity == 255) {
                 canvas.drawPicture(picture, box)
                 return
@@ -398,6 +421,11 @@ class WatermarkRenderer(private val context: Context, private val photos: PhotoR
             val state = canvas.saveLayer(box, paint)
             canvas.drawPicture(picture, box)
             canvas.restoreToCount(state)
+        }
+
+        private companion object {
+            val lightInk = 0xFFF5EFE6.toInt()
+            val darkInk = 0xFF242320.toInt()
         }
     }
 

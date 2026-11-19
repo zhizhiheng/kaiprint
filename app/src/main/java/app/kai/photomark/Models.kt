@@ -164,6 +164,7 @@ data class WatermarkLayer(
     val brand: BrandMark = BrandMark.AUTO,
     val brandTone: BrandTone = BrandTone.ORIGINAL,
     val column: LayerColumn = LayerColumn.FULL,
+    val brandStyle: BrandStyle = BrandStyle.ORIGINAL,
 ) {
     val label get() = text.takeIf { kind == LayerKind.TEXT && it.isNotBlank() } ?: kind.label
 }

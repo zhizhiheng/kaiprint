@@ -27,9 +27,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -400,11 +402,6 @@ private fun LayersPanel(
     }
     if (layer.kind == LayerKind.BRAND) {
         BrandControls(workspace, layer, metadata, overrides)
-        if (layer.brand.tintable) {
-            ChoiceMenu("标志颜色", layer.brandTone, BrandTone.entries, BrandTone::label) {
-                workspace.layer(layer.copy(brandTone = it))
-            }
-        }
     }
     ChoiceMenu("作用区域", layer.area, LayerArea.entries, { it.label }) { workspace.layer(layer.copy(area = it)) }
     ChoiceMenu("排版范围", layer.column, LayerColumn.entries, LayerColumn::label) {
@@ -548,23 +545,66 @@ private fun BrandControls(
     workspace: Workspace, layer: WatermarkLayer, metadata: PhotoMetadata, overrides: Map<MetadataField, String>,
 ) {
     val detected = BrandMark.AUTO.resolve(metadata, overrides)
-    val current = layer.brand.resolve(metadata, overrides)
-    val thumbnail by produceState<Bitmap?>(null, current) {
-        value = null
-        value = if (current == null) null else withContext(Dispatchers.Default) {
-            workspace.app.renderer.brandThumbnail(current, BrandTone.LIGHT)
+    ChoiceMenu("品牌标志", layer.brand, BrandMark.entries, { mark ->
+        if (mark == BrandMark.AUTO) "自动 · ${detected?.label ?: "未识别"}" else mark.label
+    }) { workspace.layer(layer.copy(brand = it)) }
+
+    val current = layer.brand.resolve(metadata, overrides) ?: return
+    val original = current.graphic(BrandStyle.ORIGINAL) ?: return
+    val graphic = current.graphic(layer.brandStyle) ?: return
+    val styles = BrandStyle.entries.mapNotNull { style ->
+        current.graphic(style)?.let { style to it }
+    }.filter { (style, swatch) ->
+        style == layer.brandStyle || style == BrandStyle.ORIGINAL || style == BrandStyle.SQUARE || swatch != original
+    }
+    Text("标志样式", style = MaterialTheme.typography.bodyMedium, color = Muted)
+    Row(
+        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        for ((style, swatch) in styles) key(style) {
+            BrandStyleCard(workspace.app.renderer, current, swatch, style, layer.brandTone, style == layer.brandStyle) {
+                workspace.layer(layer.copy(brandStyle = style))
+            }
         }
     }
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        thumbnail?.let { logo ->
-            Image(logo.asImageBitmap(), current?.label, Modifier.size(62.dp, 29.dp), contentScale = ContentScale.Fit)
+    if (layer.brandStyle in listOf(BrandStyle.WORDMARK, BrandStyle.SYMBOL) && graphic == original) {
+        Text("这张照片使用原版标志", color = Muted, style = MaterialTheme.typography.bodySmall)
+    }
+    if (graphic.tintable) {
+        ChoiceMenu("标志颜色", layer.brandTone, BrandTone.entries, BrandTone::label) {
+            workspace.layer(layer.copy(brandTone = it))
         }
-        Box(Modifier.weight(1f)) {
-            ChoiceMenu("品牌标志", layer.brand, BrandMark.entries, { mark ->
-                if (mark == BrandMark.AUTO) "自动 · ${detected?.label ?: "未识别"}" else mark.label
-            }) { workspace.layer(layer.copy(brand = it)) }
+    }
+}
+
+@Composable
+private fun BrandStyleCard(
+    renderer: WatermarkRenderer, brand: BrandMark, graphic: BrandGraphic, style: BrandStyle,
+    tone: BrandTone, selected: Boolean, choose: () -> Unit,
+) {
+    val artwork by produceState<Bitmap?>(null, brand, style, tone) {
+        value = null
+        value = withContext(Dispatchers.Default) { renderer.brandThumbnail(brand, tone, style) }
+    }
+    val shape = RoundedCornerShape(10.dp)
+    Column(
+        Modifier.width(84.dp).clip(shape).background(if (selected) Raised else Panel)
+            .border(1.dp, if (selected) Gold else Stroke, shape)
+            .selectable(selected, role = Role.RadioButton, onClick = choose)
+            .padding(6.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        val swatch = if (tone == BrandTone.LIGHT && graphic.tintable) Color(0xFF383944) else Color(0xFFD8D3C9)
+        Box(
+            Modifier.fillMaxWidth().height(43.dp).background(swatch, RoundedCornerShape(5.dp))
+                .padding(horizontal = 7.dp, vertical = 5.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            artwork?.let { Image(it.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Fit) }
         }
+        Text(style.label, Modifier.padding(top = 5.dp), color = if (selected) Gold else Ink,
+            style = MaterialTheme.typography.labelSmall, maxLines = 1)
     }
 }
 

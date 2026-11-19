@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.Color
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -17,11 +18,15 @@ class BrandRenderingTest {
         val bundled = BrandMark.entries.filter { it.asset != null }
         assertTrue(bundled.size >= 20)
         for (brand in bundled) {
-            val bitmap = checkNotNull(app.renderer.brandThumbnail(brand, BrandTone.ORIGINAL)) { brand.label }
-            try {
-                assertTrue(brand.label, pixels(bitmap).any { Color.alpha(it) > 128 })
-            } finally {
-                bitmap.recycle()
+            for (style in BrandStyle.entries) {
+                val label = "${brand.label} ${style.label}"
+                val bitmap = checkNotNull(app.renderer.brandThumbnail(brand, BrandTone.ORIGINAL, style)) { label }
+                try {
+                    assertTrue(label, pixels(bitmap).any { Color.alpha(it) > 128 })
+                    if (style == BrandStyle.SQUARE) assertEquals(label, bitmap.width, bitmap.height)
+                } finally {
+                    bitmap.recycle()
+                }
             }
         }
     }
@@ -31,9 +36,12 @@ class BrandRenderingTest {
         val template = Templates.zr.copy(layers = Templates.zr.layers.filter { it.kind == LayerKind.BRAND })
         val layout = WatermarkLayout.calculate(PixelSize(400, 600), template.frame)
         try {
-            fun preview(make: String, model: String, override: BrandMark = BrandMark.AUTO): IntArray {
+            fun preview(
+                make: String, model: String, override: BrandMark = BrandMark.AUTO,
+                style: BrandStyle = BrandStyle.ORIGINAL,
+            ): IntArray {
                 val exif = PhotoMetadata(mapOf(MetadataField.MAKE to make, MetadataField.MODEL to model))
-                val draft = template.copy(layers = template.layers.map { it.copy(brand = override) })
+                val draft = template.copy(layers = template.layers.map { it.copy(brand = override, brandStyle = style) })
                 val bitmap = app.renderer.preview(source, layout, draft, exif, emptyMap())
                 return try { pixels(bitmap) } finally { bitmap.recycle() }
             }
@@ -44,6 +52,12 @@ class BrandRenderingTest {
             assertFalse(unknown.contentEquals(canon))
             assertFalse(nikon.contentEquals(canon))
             assertTrue(canon.contentEquals(preview("NIKON CORPORATION", "NIKON ZR", BrandMark.CANON)))
+            val nikonSquare = preview("Nikon", "NIKON ZR", style = BrandStyle.SQUARE)
+            val canonSquare = preview("Canon", "EOS R5", style = BrandStyle.SQUARE)
+            assertFalse(nikonSquare.contentEquals(nikon))
+            assertFalse(canonSquare.contentEquals(canon))
+            assertFalse(canonSquare.contentEquals(nikonSquare))
+            assertTrue(canon.contentEquals(preview("Canon", "EOS R5", style = BrandStyle.WORDMARK)))
         } finally {
             source.recycle()
         }

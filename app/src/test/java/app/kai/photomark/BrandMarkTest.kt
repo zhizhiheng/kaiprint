@@ -41,6 +41,19 @@ class BrandMarkTest {
         assertNull(BrandMark.NONE.resolve(exif, emptyMap()))
     }
 
+    @Test fun logoStyleUsesTheDetectedBrandAndRoundTripsWithPresets() {
+        val legacy = storageJson.decodeFromString<WatermarkLayer>("""{"id":"brand","kind":"BRAND","brand":"AUTO"}""")
+        assertEquals(BrandStyle.ORIGINAL, legacy.brandStyle)
+        val square = legacy.copy(brandStyle = BrandStyle.SQUARE)
+        assertEquals(square, storageJson.decodeFromString<WatermarkLayer>(storageJson.encodeToString(square)))
+        assertEquals("nikon", BrandMark.detect(null, "NIKON ZR")?.graphic(square.brandStyle)?.asset)
+        assertEquals("nikon-wordmark", BrandMark.NIKON_Z.graphic(BrandStyle.WORDMARK)?.asset)
+        assertEquals("sony", BrandMark.SONY_ALPHA.graphic(BrandStyle.WORDMARK)?.asset)
+        assertEquals("om-system-square", BrandMark.OM_SYSTEM.graphic(BrandStyle.SQUARE)?.asset)
+        assertEquals(BrandGraphic("canon", squareBadge = true), BrandMark.CANON.graphic(square.brandStyle))
+        assertNull(BrandMark.NONE.graphic(square.brandStyle))
+    }
+
     @Test fun splitFooterHasIndependentLogoAndParameterBounds() {
         val layout = WatermarkLayout.calculate(PixelSize(4032, 6048), Templates.zr.frame)
         val brand = Templates.zr.layers.single { it.kind == LayerKind.BRAND }
