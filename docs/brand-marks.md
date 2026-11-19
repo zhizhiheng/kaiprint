@@ -15,3 +15,5 @@
 | Xiaomi | 使用 Simple Icons 的矢量图标。[Simple Icons](https://github.com/simple-icons/simple-icons/blob/develop/icons/xiaomi.svg) |
 
 标志用于表示拍摄设备品牌，相关权利归各自持有人。KaiPrint 的 MIT 许可证适用于项目自有代码。第三方组件遵循各自的许可。[第三方组件](dependencies.md)
+
+相机型号的独立标志另有下载目录，附原始文件和 PDF 页码。在编辑器中可手动导入 SVG。[机型标志素材库](../model-marks/)
