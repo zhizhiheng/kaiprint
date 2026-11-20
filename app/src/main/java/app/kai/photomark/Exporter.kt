@@ -201,9 +201,8 @@ internal fun selectPixels(
 class ExportFailure(val code: String, message: String) : IOException(message)
 
 /** A system share sheet for finished photos, granting the chosen app read access to each one. */
-internal fun shareResults(context: Context, uris: List<Uri>): Intent? {
-    val shared = uris.take(MAX_SHARE)
-    if (shared.isEmpty()) return null
+internal fun shareResults(context: Context, shared: List<Uri>): Intent? {
+    if (shared.size !in 1..MAX_SHARE) return null
     val intent = if (shared.size == 1) Intent(Intent.ACTION_SEND).putExtra(Intent.EXTRA_STREAM, shared.first())
     else Intent(Intent.ACTION_SEND_MULTIPLE).putParcelableArrayListExtra(Intent.EXTRA_STREAM, ArrayList(shared))
     val clips = ClipData.newUri(context.contentResolver, "光印成片", shared.first())
@@ -214,7 +213,7 @@ internal fun shareResults(context: Context, uris: List<Uri>): Intent? {
     return Intent.createChooser(intent, "分享成片")
 }
 
-private const val MAX_SHARE = 150
+internal const val MAX_SHARE = 150
 
 class ExportService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -320,7 +319,9 @@ class ExportService : Service() {
             .setContentText("已导出 ${outputs.size} 张" + if (failed > 0) " · $failed 张失败" else "")
             .setContentIntent(open)
             .setAutoCancel(true)
-        shareResults(this, outputs)?.let { chooser ->
+        if (outputs.size > MAX_SHARE) {
+            builder.addAction(Notification.Action.Builder(null, "分组分享", open).build())
+        } else shareResults(this, outputs)?.let { chooser ->
             val share = PendingIntent.getActivity(this, 3, chooser,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
             builder.addAction(Notification.Action.Builder(null, "分享", share).build())

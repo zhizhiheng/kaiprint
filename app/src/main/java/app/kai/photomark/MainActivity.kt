@@ -477,7 +477,10 @@ private fun ExportScreen(workspace: Workspace, diagnostics: () -> Unit) {
     val running = workspace.runningJob == selected.id
     val hasPending = items.any { it.state == ItemState.WAITING.name || it.state == ItemState.RUNNING.name }
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
+    val outputs = remember(items) {
+        items.filter { it.state == ItemState.DONE.name }.mapNotNull { it.outputUri?.let(Uri::parse) }
+    }
+    var showShareGroups by remember(selected.id) { mutableStateOf(false) }
 
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 9.dp, vertical = 8.dp),
@@ -501,11 +504,23 @@ private fun ExportScreen(workspace: Workspace, diagnostics: () -> Unit) {
                         hasPending -> Button({ workspace.resume(selected.id) }, enabled = workspace.runningJob == null) { Text("继续导出") }
                         failed > 0 -> Button({ workspace.resume(selected.id, true) }, enabled = workspace.runningJob == null) { Text("重试失败项") }
                     }
-                    if (finished > 0) {
+                    if (outputs.isNotEmpty()) Box {
                         TextButton({
-                            val uris = items.mapNotNull { it.outputUri?.let(Uri::parse) }.take(150)
-                            scope.launch { share(context, uris) }
-                        }) { Icon(Icons.Default.Share, null, Modifier.size(18.dp)); Text(" 分享") }
+                            if (outputs.size <= MAX_SHARE) share(context, outputs) else showShareGroups = true
+                        }) {
+                            Icon(Icons.Default.Share, null, Modifier.size(18.dp))
+                            Text(if (outputs.size <= MAX_SHARE) "分享" else "分组分享")
+                        }
+                        DropdownMenu(showShareGroups, { showShareGroups = false }) {
+                            for (start in outputs.indices step MAX_SHARE) {
+                                val end = minOf(start + MAX_SHARE, outputs.size)
+                                val label = if (start + 1 == end) "第 ${end} 张" else "第 ${start + 1}–${end} 张"
+                                DropdownMenuItem(text = { Text(label) }, onClick = {
+                                    showShareGroups = false
+                                    share(context, outputs.subList(start, end))
+                                })
+                            }
+                        }
                     }
                 }
             }

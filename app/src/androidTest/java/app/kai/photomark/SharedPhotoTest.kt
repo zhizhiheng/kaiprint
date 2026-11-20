@@ -8,6 +8,7 @@ import android.graphics.Color
 import android.net.Uri
 import android.provider.MediaStore
 import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
@@ -18,6 +19,7 @@ import androidx.exifinterface.media.ExifInterface
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -33,6 +35,32 @@ class SharedPhotoTest {
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
     private val resolver = context.contentResolver
     private val collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test fun offersEveryFinishedPhotoWhenAJobNeedsTwoShareGroups() {
+        val db = (context.applicationContext as PhotoMarkApp).database
+        val id = "share-groups-${System.nanoTime()}"
+        val items = (1..151).map { position ->
+            ExportItemRow(id, position, "{}", "Photo $position", "JPEG", state = ItemState.DONE.name,
+                outputUri = Uri.withAppendedPath(collection, position.toString()).toString())
+        }
+        try {
+            runBlocking {
+                db.dao().insertJob(ExportJobRow(id, System.currentTimeMillis(), "{}", "{}", RunState.FINISHED.name))
+                db.dao().insertItems(items)
+            }
+            val intent = Intent(context, MainActivity::class.java).putExtra(ExportService.SHOW_JOB, id)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            ActivityScenario.launch<MainActivity>(intent).use {
+                compose.waitUntilAtLeastOneExists(hasText("分组分享"), 15_000)
+                compose.onNodeWithText("分组分享").performClick()
+                compose.onNodeWithText("第 1–150 张").assertIsDisplayed()
+                compose.onNodeWithText("第 151 张").assertIsDisplayed()
+            }
+        } finally {
+            db.openHelper.writableDatabase.execSQL("DELETE FROM ExportJobRow WHERE id = ?", arrayOf(id))
+        }
+    }
 
     @OptIn(ExperimentalTestApi::class)
     @Test fun opensPhotosSharedFromAnotherAppAndExportsForXiaohongshu() {
