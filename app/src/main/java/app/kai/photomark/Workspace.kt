@@ -92,6 +92,10 @@ class Workspace(application: Application) : AndroidViewModel(application) {
     )
         private set
 
+    /** Bumped when photo details must be read again, such as after location access is granted. */
+    var detailsGeneration by mutableStateOf(0)
+        private set
+
     val presets: StateFlow<List<PresetRow>> = dao.observePresets()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     val jobs: StateFlow<List<ExportJobRow>> = dao.observeJobs()
@@ -276,11 +280,7 @@ class Workspace(application: Application) : AndroidViewModel(application) {
 
     fun apply(template: WatermarkTemplate) {
         // Built-in templates carry no canvas ratio, so switching between them keeps the chosen post shape.
-        val selected = if (template in Templates.all) template.copy(
-            captions = draft.template.captions,
-            frame = template.frame.copy(ratio = draft.template.frame.ratio),
-        ) else template
-        edit(draft.copy(template = selected))
+        edit(draft.copy(template = Templates.adopt(template, draft.template)))
         activeLayer = null
         if (editing.isNotEmpty()) screen = Screen.EDITOR
     }
@@ -292,6 +292,8 @@ class Workspace(application: Application) : AndroidViewModel(application) {
         val captions = if (value.isEmpty()) template.captions - field else template.captions + (field to value.take(120))
         edit(draft.copy(template = template.copy(captions = captions)))
     }
+
+    fun place(style: PlaceStyle) = edit(draft.copy(template = draft.template.copy(place = style)))
 
     fun layer(layer: WatermarkLayer, live: Boolean = false) {
         val layers = draft.template.layers.map { if (it.id == layer.id) layer else it }
@@ -509,9 +511,14 @@ class Workspace(application: Application) : AndroidViewModel(application) {
     fun importPreset(uri: Uri) {
         viewModelScope.launch {
             capture("无法导入此预设包") {
-                val template = withContext(Dispatchers.IO) { PresetArchive(app).read(uri) }
+                val imported = withContext(Dispatchers.IO) { PresetArchive(app).read(uri) }
+                val template = imported.template
                 dao.upsertPreset(PresetRow(template.id, template.title, storageJson.encodeToString(template), System.currentTimeMillis()))
-                message = "已导入预设「${template.title}」"
+                val missing = listOfNotNull(
+                    "${imported.missingFonts} 个字体改用默认字体".takeIf { imported.missingFonts > 0 },
+                    "${imported.missingLogos} 个 Logo 缺失".takeIf { imported.missingLogos > 0 },
+                )
+                message = "已导入预设「${template.title}」" + if (missing.isEmpty()) "" else "，" + missing.joinToString("，")
             }
         }
     }
@@ -520,7 +527,13 @@ class Workspace(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             capture("无法保存预设包") {
                 withContext(Dispatchers.IO) {
-                    PresetArchive(app).write(storageJson.decodeFromString<WatermarkTemplate>(preset.template), uri)
+                    val template = storageJson.decodeFromString<WatermarkTemplate>(preset.template)
+                    val preview = runCatching { app.renderer.sample(template) }.getOrNull()
+                    try {
+                        PresetArchive(app).write(template, uri, preview)
+                    } finally {
+                        preview?.recycle()
+                    }
                 }
                 message = "预设包已保存"
             }
@@ -561,6 +574,26 @@ class Workspace(application: Application) : AndroidViewModel(application) {
 
     suspend fun info(group: PhotoGroup): PhotoInfo = withContext(Dispatchers.IO) {
         details.get(group) ?: app.photos.info(group).also { details.put(group, it) }
+    }
+
+    fun locationGranted() {
+        details.evictAll()
+        detailsGeneration++
+    }
+
+    /** Checks up to [limit] photos of the edit the way the exporter will. */
+    suspend fun exportSummary(settings: ExportSettings, all: Boolean, limit: Int = 300): ExportSummary {
+        val photos = if (all) editing else listOfNotNull(current)
+        val template = draft.template
+        val choices = draft.pixelChoices
+        val overrides = draft.overrides
+        val results = photos.take(limit).map { group ->
+            val info = runCatching { info(group) }
+            info.getOrNull()?.metadata to info.mapCatching {
+                planExport(it, choices[group.id], template, settings, overrides[group.id].orEmpty(), android.os.Build.VERSION.SDK_INT)
+            }
+        }
+        return ExportSummary.of(results, photos.size)
     }
 
     fun enqueue(settings: ExportSettings, all: Boolean) {

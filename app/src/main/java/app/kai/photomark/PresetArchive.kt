@@ -55,13 +55,22 @@ internal fun renderSvg(input: InputStream): Bitmap {
     return bitmap
 }
 
+/** A preset read from a ZIP, with what it referred to but did not carry. */
+data class ImportedPreset(val template: WatermarkTemplate, val missingFonts: Int = 0, val missingLogos: Int = 0)
+
 class PresetArchive(private val context: Context) {
-    fun write(template: WatermarkTemplate, uri: Uri) {
+    /** Writes template.json, a preview.jpg rendered on a sample photo when [preview] is given, and the assets. */
+    fun write(template: WatermarkTemplate, uri: Uri, preview: Bitmap? = null) {
         val stream = context.contentResolver.openOutputStream(uri, "wt") ?: throw IOException("文件无法写入")
         ZipOutputStream(stream.buffered()).use { zip ->
             zip.putNextEntry(ZipEntry("template.json"))
             zip.write(storageJson.encodeToString(template).toByteArray())
             zip.closeEntry()
+            if (preview != null) {
+                zip.putNextEntry(ZipEntry(PREVIEW))
+                preview.compress(Bitmap.CompressFormat.JPEG, 88, zip)
+                zip.closeEntry()
+            }
             var remaining = MAX_ARCHIVE
             for (name in assets(template)) {
                 val asset = File(File(context.filesDir, directory(name)), name)
@@ -73,7 +82,11 @@ class PresetArchive(private val context: Context) {
         }
     }
 
-    fun read(uri: Uri): WatermarkTemplate {
+    /**
+     * Reads a preset ZIP. A font the archive names but does not carry falls back to the layer's own type style,
+     * and a missing logo leaves its layer empty, so a preset shared without its assets still opens.
+     */
+    fun read(uri: Uri): ImportedPreset {
         val stream = context.contentResolver.openInputStream(uri) ?: throw IOException("文件无法读取")
         val staged = mutableMapOf<String, File>()
         val imported = mutableListOf<File>()
@@ -89,6 +102,11 @@ class PresetArchive(private val context: Context) {
                         val bytes = ByteArrayOutputStream()
                         zip.copyBounded(bytes, 256 * 1024)
                         manifest = bytes.toString(Charsets.UTF_8.name())
+                    } else if (entry.name == PREVIEW || entry.name == "README.md") {
+                        zip.copyBounded(object : OutputStream() {
+                            override fun write(b: Int) = Unit
+                            override fun write(b: ByteArray, off: Int, len: Int) = Unit
+                        }, MAX_ASSET)
                     } else if (entry.name.startsWith("assets/")) {
                         val name = entry.name.removePrefix("assets/")
                         require(assetName.matches(name) && name !in staged && !entry.isDirectory)
@@ -104,7 +122,9 @@ class PresetArchive(private val context: Context) {
             val template = storageJson.decodeFromString<WatermarkTemplate>(manifest ?: throw IOException("缺少模板"))
             require(template.version == 1 && template.title.isNotBlank() && template.layers.size <= 24)
             require(template.layers.map(WatermarkLayer::id).toSet().size == template.layers.size)
-            require(assets(template) == staged.keys)
+            val referenced = assets(template)
+            require(referenced.containsAll(staged.keys))
+            val missing = referenced - staged.keys
             val replacements = staged.mapValues { (name, source) ->
                 if (name.endsWith(".png")) {
                     val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -120,9 +140,10 @@ class PresetArchive(private val context: Context) {
                 source.copyTo(target)
                 newName
             }
-            return template.copy(id = UUID.randomUUID().toString(), title = template.title.take(60), layers = template.layers.map {
+            val imported = template.copy(id = UUID.randomUUID().toString(), title = template.title.take(60), layers = template.layers.map {
                 it.copy(logoFile = replacements[it.logoFile], fontFile = replacements[it.fontFile], text = it.text.take(240))
             })
+            return ImportedPreset(imported, missing.count { !it.endsWith(".png") }, missing.count { it.endsWith(".png") })
         } catch (error: Exception) {
             imported.forEach(File::delete)
             throw error
@@ -137,4 +158,8 @@ class PresetArchive(private val context: Context) {
         }
 
     private fun directory(name: String) = if (name.endsWith(".png")) "logos" else "fonts"
+
+    companion object {
+        const val PREVIEW = "preview.jpg"
+    }
 }

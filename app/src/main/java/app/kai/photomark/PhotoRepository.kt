@@ -44,6 +44,10 @@ class PhotoRepository(private val context: Context) {
         }
     }
 
+    /** Whether photos from the device library can show where they were taken. */
+    val locationAccess get() = BuildConfig.FLAVOR == "library" &&
+        context.checkSelfPermission(Manifest.permission.ACCESS_MEDIA_LOCATION) == PackageManager.PERMISSION_GRANTED
+
     fun libraryPage(offset: Int, pageSize: Int): List<PhotoSource> {
         if (permissionState() == LibraryAccess.NONE) return emptyList()
         val collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
@@ -157,6 +161,8 @@ class PhotoRepository(private val context: Context) {
         val metadata = primaryMetadata.copy(
             values = fallbackMetadata.values + primaryMetadata.values,
             exif = fallbackMetadata.exif + primaryMetadata.exif,
+            latitude = primaryMetadata.latitude ?: fallbackMetadata.latitude,
+            longitude = primaryMetadata.longitude ?: fallbackMetadata.longitude,
         )
         val choices = buildList {
             if (source.format.raw) {
@@ -173,7 +179,7 @@ class PhotoRepository(private val context: Context) {
                 ) {
                     val full = raw.size.oriented(metadata.orientation)
                     val visible = previewSize?.takeIf { apparent ->
-                        metadata.values[MetadataField.MODEL]?.uppercase(Locale.ROOT) in setOf("ZR", "NIKON ZR") &&
+                        metadata.exif[ExifInterface.TAG_MODEL]?.uppercase(Locale.ROOT) in setOf("ZR", "NIKON ZR") &&
                             full.width - apparent.width in 0..32 && full.height - apparent.height in 0..32
                     } ?: full
                     val candidate = PixelChoice(source, PixelKind.RAW, visible, metadata.orientation)
@@ -224,7 +230,10 @@ class PhotoRepository(private val context: Context) {
         return decodeEmbedded(preview, size)
     }
 
-    fun load(choice: PixelChoice, maximumEdge: Int, outputColor: OutputColor = OutputColor.SRGB): Bitmap {
+    /** Decodes [choice]. With [keepGainmap], an Ultra HDR JPEG keeps its gain map on the returned bitmap. */
+    fun load(
+        choice: PixelChoice, maximumEdge: Int, outputColor: OutputColor = OutputColor.SRGB, keepGainmap: Boolean = false,
+    ): Bitmap {
         val bitmap = when (choice.kind) {
             PixelKind.EMBEDDED -> {
                 val preview = embedded(choice.source, readExif(choice.source), choice.orientation)
@@ -233,7 +242,7 @@ class PhotoRepository(private val context: Context) {
             }
             PixelKind.RAW -> decodeRaw(choice, maximumEdge > 0 && maximumEdge < choice.size.longEdge / 2)
             PixelKind.STANDARD, PixelKind.COMPANION -> {
-                decodePhoto(choice, maximumEdge, outputColor)
+                decodePhoto(choice, maximumEdge, outputColor, keepGainmap)
             }
         } ?: throw IOException("无法解码此文件")
         if (maximumEdge == 0 && PixelSize(bitmap.width, bitmap.height) != choice.size) {
@@ -249,7 +258,7 @@ class PhotoRepository(private val context: Context) {
         return bitmap
     }
 
-    private fun decodePhoto(choice: PixelChoice, maximumEdge: Int, outputColor: OutputColor): Bitmap {
+    private fun decodePhoto(choice: PixelChoice, maximumEdge: Int, outputColor: OutputColor, keepGainmap: Boolean): Bitmap {
         val format = choice.source.format
         fun software() = withDescriptor(choice.source) { RasterCodec.decode(it, format, maximumEdge, outputColor) }
             ?.let { rotate(it, choice.orientation) }
@@ -257,14 +266,14 @@ class PhotoRepository(private val context: Context) {
             software()?.let { return it }
         }
         return try {
-            decodeStandard(Uri.parse(choice.source.uri), maximumEdge, outputColor)
+            decodeStandard(Uri.parse(choice.source.uri), maximumEdge, outputColor, keepGainmap)
         } catch (error: IOException) {
             if (format == PhotoFormat.HEIF && !choice.hdr) software()?.let { return it }
             throw error
         }
     }
 
-    private fun decodeStandard(uri: Uri, maximumEdge: Int, outputColor: OutputColor): Bitmap {
+    private fun decodeStandard(uri: Uri, maximumEdge: Int, outputColor: OutputColor, keepGainmap: Boolean = false): Bitmap {
         return ImageDecoder.decodeBitmap(ImageDecoder.createSource(resolver, uri)) { decoder, info, _ ->
             decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
             decoder.setTargetColorSpace(outputColor.androidColorSpace())
@@ -274,7 +283,7 @@ class PhotoRepository(private val context: Context) {
                     decoder.setTargetSize(limit.width, limit.height)
                 }
             }
-        }.also { if (Build.VERSION.SDK_INT >= 34 && it.hasGainmap()) it.gainmap = null }
+        }.also { if (!keepGainmap && Build.VERSION.SDK_INT >= 34 && it.hasGainmap()) it.gainmap = null }
     }
 
     private fun hdrHeif(uri: Uri): Boolean = runCatching {
@@ -328,8 +337,13 @@ class PhotoRepository(private val context: Context) {
     }
 
     private fun readExif(source: PhotoSource): ExifInterface? {
-        val platform = runCatching {
-            resolver.openInputStream(Uri.parse(source.uri))?.use { ExifInterface(it) }
+        val uri = Uri.parse(source.uri)
+        // Media store copies hide GPS unless the app holds ACCESS_MEDIA_LOCATION and asks for the original.
+        val original = if (uri.authority == MediaStore.AUTHORITY && locationAccess) runCatching {
+            resolver.openInputStream(MediaStore.setRequireOriginal(uri))?.use { ExifInterface(it) }
+        }.getOrNull() else null
+        val platform = original ?: runCatching {
+            resolver.openInputStream(uri)?.use { ExifInterface(it) }
         }.getOrNull()
         if (source.format != PhotoFormat.HEIF || platform?.getAttribute(ExifInterface.TAG_MODEL) != null) {
             return platform
@@ -426,16 +440,21 @@ private object RawDecoder {
     fun preview(fd: Int): ByteArray? = if (available) nativePreview(fd) else null
 }
 
-private val safeExif = listOf(
+/** Shooting details that a finished photo keeps. Location and serial numbers are never in this list. */
+internal val safeExif = listOf(
     ExifInterface.TAG_MAKE, ExifInterface.TAG_MODEL, ExifInterface.TAG_LENS_MODEL,
     ExifInterface.TAG_FOCAL_LENGTH, ExifInterface.TAG_F_NUMBER, ExifInterface.TAG_EXPOSURE_TIME,
     ExifInterface.TAG_PHOTOGRAPHIC_SENSITIVITY, ExifInterface.TAG_DATETIME_ORIGINAL,
     ExifInterface.TAG_EXPOSURE_BIAS_VALUE, ExifInterface.TAG_FOCAL_LENGTH_IN_35MM_FILM,
+    ExifInterface.TAG_LENS_MAKE, ExifInterface.TAG_LENS_SPECIFICATION,
 )
 
+/** Authorship tags. Export writes them according to [ExportSettings.credit]. */
+internal val creditExif = listOf(ExifInterface.TAG_ARTIST, ExifInterface.TAG_COPYRIGHT)
+
 private fun metadata(exif: ExifInterface?, raw: RawInfo?): PhotoMetadata {
-    val tags = raw?.tags.orEmpty() + safeExif.mapNotNull { tag ->
-        exif?.getAttribute(tag)?.trim()?.takeIf(String::isNotBlank)?.let { tag to it }
+    val tags = raw?.tags.orEmpty() + (safeExif + creditExif).mapNotNull { tag ->
+        exif?.getAttribute(tag)?.trim()?.trim('\u0000')?.takeIf(String::isNotBlank)?.let { tag to it }
     }
     fun num(tag: String, positiveOnly: Boolean = true): Double? {
         val value = tags[tag] ?: return null
@@ -447,9 +466,13 @@ private fun metadata(exif: ExifInterface?, raw: RawInfo?): PhotoMetadata {
     fun decimal(value: Double): String = DecimalFormat("0.##", DecimalFormatSymbols(Locale.ROOT)).format(value)
 
     val values = buildMap {
-        tags[ExifInterface.TAG_MAKE]?.let { put(MetadataField.MAKE, it) }
-        tags[ExifInterface.TAG_MODEL]?.let { put(MetadataField.MODEL, it) }
-        tags[ExifInterface.TAG_LENS_MODEL]?.let { put(MetadataField.LENS, it) }
+        val make = tags[ExifInterface.TAG_MAKE]
+        val model = tags[ExifInterface.TAG_MODEL]
+        make?.let { Cameras.make(it, model) }?.let { put(MetadataField.MAKE, it) }
+        model?.let { Cameras.model(make, it) }?.let { put(MetadataField.MODEL, it) }
+        Lenses.display(tags[ExifInterface.TAG_LENS_MODEL], tags[ExifInterface.TAG_LENS_MAKE],
+            tags[ExifInterface.TAG_LENS_SPECIFICATION], make, model)?.let { put(MetadataField.LENS, it) }
+        tags[ExifInterface.TAG_ARTIST]?.let { put(MetadataField.AUTHOR, it.take(120)) }
         num(ExifInterface.TAG_FOCAL_LENGTH)?.let { put(MetadataField.FOCAL, "${decimal(it)} mm") }
         num(ExifInterface.TAG_F_NUMBER)?.let { put(MetadataField.APERTURE, "f/${decimal(it)}") }
         num(ExifInterface.TAG_EXPOSURE_TIME)?.let {
@@ -469,8 +492,12 @@ private fun metadata(exif: ExifInterface?, raw: RawInfo?): PhotoMetadata {
         }
     }
     val orientation = exif?.getAttributeInt(ExifInterface.TAG_ORIENTATION, 0)?.takeIf { it in 1..8 } ?: raw?.orientation ?: 1
+    val position = exif?.latLong?.takeIf { (latitude, longitude) ->
+        latitude in -90.0..90.0 && longitude in -180.0..180.0 && (latitude != 0.0 || longitude != 0.0)
+    }
     return PhotoMetadata(values, tags, orientation,
-        raw?.size?.width ?: 0, raw?.size?.height ?: 0, raw?.compression?.takeIf { it != 0 })
+        raw?.size?.width ?: 0, raw?.size?.height ?: 0, raw?.compression?.takeIf { it != 0 },
+        position?.get(0), position?.get(1))
 }
 
 internal fun OutputColor.androidColorSpace(): ColorSpace = ColorSpace.get(

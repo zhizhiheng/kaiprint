@@ -116,6 +116,6 @@ class LayoutTest {
         }
         val personalized = Templates.colorAtlas.copy(captions = mapOf(MetadataField.AUTHOR to "摄影师"))
         assertEquals(personalized, storageJson.decodeFromString<WatermarkTemplate>(storageJson.encodeToString(personalized)))
-        assertEquals(12, Templates.all.map { it.id }.distinct().size)
+        assertEquals(13, Templates.all.map { it.id }.distinct().size)
     }
 }

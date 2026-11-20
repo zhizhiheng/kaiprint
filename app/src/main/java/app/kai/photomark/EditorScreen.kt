@@ -1,6 +1,7 @@
 package app.kai.photomark
 
 import android.graphics.Bitmap
+import android.os.Build
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -84,6 +85,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.exifinterface.media.ExifInterface
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -94,7 +96,10 @@ private enum class EditorPanel(val label: String) {
 }
 
 @Composable
-fun EditorScreen(workspace: Workspace, importLogo: () -> Unit, importFont: () -> Unit, export: (ExportSettings, Boolean) -> Unit) {
+fun EditorScreen(
+    workspace: Workspace, importLogo: () -> Unit, importFont: () -> Unit, requestLocation: () -> Unit,
+    export: (ExportSettings, Boolean) -> Unit,
+) {
     val group = workspace.current ?: return
     var panel by remember { mutableStateOf(EditorPanel.TEMPLATES) }
     var saving by remember { mutableStateOf(false) }
@@ -102,7 +107,7 @@ fun EditorScreen(workspace: Workspace, importLogo: () -> Unit, importFont: () ->
     var moving by remember { mutableStateOf(false) }
     var drag by remember(group.id, workspace.activeLayer) { mutableStateOf(Offset.Zero) }
     val draft = workspace.draft
-    val infoResult by produceState<Result<PhotoInfo>?>(null, group) {
+    val infoResult by produceState<Result<PhotoInfo>?>(null, group, workspace.detailsGeneration) {
         value = null
         value = try {
             Result.success(workspace.info(group))
@@ -191,7 +196,7 @@ fun EditorScreen(workspace: Workspace, importLogo: () -> Unit, importFont: () ->
                 }
             }
         }
-        val panelFraction = if (panel == EditorPanel.TEMPLATES) .34f else .46f
+        val panelFraction = if (panel == EditorPanel.TEMPLATES) .40f else .46f
         Surface(color = Panel, modifier = Modifier.fillMaxWidth().fillMaxHeight(panelFraction),
             shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)) {
             Column(Modifier.fillMaxSize()) {
@@ -212,7 +217,7 @@ fun EditorScreen(workspace: Workspace, importLogo: () -> Unit, importFont: () ->
                         EditorPanel.LAYERS -> LayersPanel(workspace, layer, moving, { moving = it }, importLogo, importFont,
                             info?.metadata ?: PhotoMetadata(), override)
                         EditorPanel.FRAME -> FramePanel(workspace, source)
-                        EditorPanel.METADATA -> MetadataPanel(workspace, group, info, pixels)
+                        EditorPanel.METADATA -> MetadataPanel(workspace, group, info, pixels, requestLocation)
                     }
                 }
             }
@@ -228,7 +233,7 @@ fun EditorScreen(workspace: Workspace, importLogo: () -> Unit, importFont: () ->
     }
     val currentPixels = pixels
     if (exporting && currentPixels != null) {
-        ExportOptions(workspace, currentPixels, info?.metadata, override, { exporting = false }) { settings, all ->
+        ExportOptions(workspace, info, override, requestLocation, { exporting = false }) { settings, all ->
             exporting = false
             export(settings, all)
         }
@@ -320,19 +325,29 @@ private fun TemplatePanel(
     overrides: Map<MetadataField, String>, save: () -> Unit,
 ) {
     val presets by workspace.presets.collectAsState()
-    val templates = Templates.all + presets.mapNotNull {
+    var filter by remember { mutableStateOf(Templates.Kind.ALL) }
+    val templates = (Templates.all + presets.mapNotNull {
         runCatching { storageJson.decodeFromString<WatermarkTemplate>(it.template) }.getOrNull()
+    }).filter { filter == Templates.Kind.ALL || Templates.kind(it) == filter }
+    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).testTag("template-filter"),
+        horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        for (kind in Templates.Kind.entries) {
+            FilterChip(filter == kind, { filter = kind }, { Text(kind.label, maxLines = 1) })
+        }
     }
+    val current = workspace.draft.template
     LazyRow(modifier = Modifier.testTag("template-strip"), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        items(templates, key = WatermarkTemplate::id) { template ->
-            val selected = workspace.draft.template.id == template.id
+        items(templates, key = WatermarkTemplate::id) { choice ->
+            val selected = workspace.draft.template.id == choice.id
+            // The thumbnail shows the template as tapping it would apply it: same canvas shape, credit and place.
+            val template = if (selected) current else Templates.adopt(choice, current)
             val rendered by produceState<Bitmap?>(null, source, pixels, metadata, template, overrides) {
                 value = if (source != null && pixels != null && metadata != null) withContext(Dispatchers.Default) {
                     workspace.app.renderer.preview(source, WatermarkLayout.calculate(pixels.size, template, metadata = metadata, overrides = overrides),
                         template, metadata, overrides, 192)
                 } else null
             }
-            Surface(onClick = { workspace.apply(template) }, color = if (selected) Raised else Panel,
+            Surface(onClick = { workspace.apply(choice) }, color = if (selected) Raised else Panel,
                 shape = RoundedCornerShape(10.dp),
                 modifier = Modifier.then(if (selected) Modifier.border(1.dp, Gold, RoundedCornerShape(10.dp)) else Modifier)) {
                 Column(Modifier.padding(5.dp).size(94.dp, 99.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -347,8 +362,8 @@ private fun TemplatePanel(
             }
         }
     }
-    PostTargets(workspace)
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.weight(1f)) { PostTargets(workspace) }
         TextButton(save) { Text("保存为预设") }
     }
 }
@@ -356,9 +371,9 @@ private fun TemplatePanel(
 @Composable
 private fun PostTargets(workspace: Workspace) {
     val frame = workspace.draft.template.frame
-    Text("发布到", color = Muted, style = MaterialTheme.typography.bodySmall)
     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).testTag("post-targets"),
-        horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text("发布到", color = Muted, style = MaterialTheme.typography.bodySmall)
         for (target in PostTarget.entries) {
             val chosen = frame.ratio == target.ratio
             FilterChip(chosen, {
@@ -481,6 +496,9 @@ private fun FramePanel(workspace: Workspace, bitmap: Bitmap?) {
     }
     Palette("边框颜色", frame.color, swatches) { workspace.frame(frame.copy(color = it)) }
     Toggle("照片细线边缘", frame.hairline) { workspace.frame(frame.copy(hairline = it)) }
+    Toggle("没有参数时收起空白边", frame.collapseEmpty) { workspace.frame(frame.copy(collapseEmpty = it)) }
+    Text("缺少拍摄参数的照片，参数条缩到与侧边相同的留白。关闭后保留设定的留白。", color = Muted,
+        style = MaterialTheme.typography.bodySmall)
     val pct: (Float) -> String = { "${(it * 100).roundToInt()}%" }
     if (frame.background == FrameBackground.FROSTED) {
         SliderRow("模糊程度", frame.blur, .02f.. .24f, pct, workspace::finishAdjustment) {
@@ -497,7 +515,9 @@ private fun FramePanel(workspace: Workspace, bitmap: Bitmap?) {
 }
 
 @Composable
-private fun MetadataPanel(workspace: Workspace, group: PhotoGroup, info: PhotoInfo?, pixels: PixelChoice?) {
+private fun MetadataPanel(
+    workspace: Workspace, group: PhotoGroup, info: PhotoInfo?, pixels: PixelChoice?, requestLocation: () -> Unit,
+) {
     if (info == null) {
         Text("等待读取拍摄参数", color = Muted)
         return
@@ -546,6 +566,7 @@ private fun MetadataPanel(workspace: Workspace, group: PhotoGroup, info: PhotoIn
         }
         Text("随模板保存。单张照片可以在下方单独改写。", color = Muted,
             style = MaterialTheme.typography.bodySmall)
+        PlaceControls(workspace, info.metadata, requestLocation)
     }
     HorizontalDivider(color = Stroke)
     if (pixels != null) {
@@ -592,6 +613,27 @@ private fun MetadataPanel(workspace: Workspace, group: PhotoGroup, info: PhotoIn
                 color = Muted, style = MaterialTheme.typography.bodySmall)
         }
     }
+}
+
+@Composable
+private fun PlaceControls(workspace: Workspace, metadata: PhotoMetadata, requestLocation: () -> Unit) {
+    val template = workspace.draft.template
+    ChoiceMenu("地点来源", template.place, PlaceStyle.entries, PlaceStyle::label) {
+        workspace.place(it)
+        if (it != PlaceStyle.MANUAL) requestLocation()
+    }
+    val resolved by produceState<String?>(null, template.place, metadata) {
+        value = withContext(Dispatchers.IO) { workspace.app.renderer.place(template, metadata) }
+    }
+    val manual = template.captions[MetadataField.LOCATION].orEmpty()
+    val fallback = if (manual.isBlank()) "地点留空" else "印手填的「$manual」"
+    val note = when {
+        template.place == PlaceStyle.MANUAL -> "只印手填地点。照片自带的位置不会出现在画面上。"
+        !metadata.hasLocation -> "这张照片没有可读的位置，$fallback。系统选图和部分分享会去掉位置。"
+        resolved == null -> "附近 ${PlaceIndex.RADIUS_KM.toInt()} 公里内没有收录的城市，$fallback。"
+        else -> "这张照片印「$resolved」。精确坐标是否写入成片，在导出时单独选择。"
+    }
+    Text(note, color = Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("place-note"))
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -688,9 +730,9 @@ private fun BrandControls(
     }
     val current = layer.brand.resolve(metadata, overrides) ?: return
     val original = current.graphic(BrandStyle.ORIGINAL) ?: return
-    val graphic = current.graphic(layer.brandStyle) ?: return
+    val graphic = current.graphic(layer.brandStyle, metadata, overrides) ?: return
     val styles = BrandStyle.entries.mapNotNull { style ->
-        current.graphic(style)?.let { style to it }
+        current.graphic(style, metadata, overrides)?.let { style to it }
     }.filter { (style, swatch) ->
         style == layer.brandStyle || style == BrandStyle.ORIGINAL || style == BrandStyle.SQUARE || swatch != original
     }
@@ -700,13 +742,19 @@ private fun BrandControls(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         for ((style, swatch) in styles) key(style) {
-            BrandStyleCard(workspace.app.renderer, current, swatch, style, layer.brandTone, style == layer.brandStyle) {
+            BrandStyleCard(workspace.app.renderer, current, swatch, style, layer.brandTone, style == layer.brandStyle,
+                metadata, overrides) {
                 workspace.layer(layer.copy(brandStyle = style))
             }
         }
     }
     if (layer.brandStyle in listOf(BrandStyle.WORDMARK, BrandStyle.SYMBOL) && graphic == original) {
         Text("这张照片使用原版标志", color = Muted, style = MaterialTheme.typography.bodySmall)
+    }
+    if (layer.brandStyle == BrandStyle.MODEL) {
+        Text(if (graphic.model) "按每张照片的机型匹配，没有机型标志的照片使用品牌标志。"
+            else "这台相机暂无机型标志，使用品牌标志。可在图层中导入自己的 SVG。",
+            color = Muted, style = MaterialTheme.typography.bodySmall)
     }
     if (graphic.tintable) {
         ChoiceMenu("标志颜色", layer.brandTone, BrandTone.entries, BrandTone::label) {
@@ -718,11 +766,12 @@ private fun BrandControls(
 @Composable
 private fun BrandStyleCard(
     renderer: WatermarkRenderer, brand: BrandMark, graphic: BrandGraphic, style: BrandStyle,
-    tone: BrandTone, selected: Boolean, choose: () -> Unit,
+    tone: BrandTone, selected: Boolean, metadata: PhotoMetadata, overrides: Map<MetadataField, String>,
+    choose: () -> Unit,
 ) {
-    val artwork by produceState<Bitmap?>(null, brand, style, tone) {
+    val artwork by produceState<Bitmap?>(null, brand, graphic, tone) {
         value = null
-        value = withContext(Dispatchers.Default) { renderer.brandThumbnail(brand, tone, style) }
+        value = withContext(Dispatchers.Default) { renderer.brandThumbnail(brand, tone, style, metadata, overrides) }
     }
     val shape = RoundedCornerShape(10.dp)
     Column(
@@ -740,8 +789,10 @@ private fun BrandStyleCard(
         ) {
             artwork?.let { Image(it.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Fit) }
         }
-        val label = if (style == BrandStyle.SQUARE && brand in listOf(BrandMark.NIKON, BrandMark.NIKON_Z))
-            "尼康黄底方标" else style.label
+        val label = when {
+            style == BrandStyle.SQUARE && brand in listOf(BrandMark.NIKON, BrandMark.NIKON_Z) -> "尼康黄底方标"
+            else -> style.label
+        }
         Text(label, Modifier.padding(top = 5.dp), color = if (selected) Gold else Ink,
             style = MaterialTheme.typography.labelSmall, maxLines = 1)
     }
@@ -813,13 +864,24 @@ private fun Palette(label: String, selected: String, sampled: List<String> = emp
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ExportOptions(workspace: Workspace, pixels: PixelChoice, metadata: PhotoMetadata?,
-                          overrides: Map<MetadataField, String>, close: () -> Unit,
+private fun ExportOptions(workspace: Workspace, info: PhotoInfo?, overrides: Map<MetadataField, String>,
+                          requestLocation: () -> Unit, close: () -> Unit,
                           output: (ExportSettings, Boolean) -> Unit) {
     var settings by remember { mutableStateOf(workspace.exportSettings) }
     var all by remember { mutableStateOf(workspace.editing.size > 1) }
     val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val layout = WatermarkLayout.calculate(pixels.size, workspace.draft.template, settings, metadata, overrides)
+    val group = workspace.current ?: return
+    val plan = info?.let {
+        runCatching {
+            planExport(it, workspace.draft.pixelChoices[group.id], workspace.draft.template, settings, overrides,
+                Build.VERSION.SDK_INT)
+        }
+    }
+    val current = plan?.getOrNull()
+    val summary by produceState<ExportSummary?>(null, settings, all, workspace.draft) {
+        value = null
+        if (all && workspace.editing.size > 1) value = workspace.exportSummary(settings, true)
+    }
     val sizes = (SizeLimit.choices + settings.size).distinct()
     ModalBottomSheet(onDismissRequest = close, sheetState = sheet, containerColor = Panel) {
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 22.dp)
@@ -832,7 +894,6 @@ private fun ExportOptions(workspace: Workspace, pixels: PixelChoice, metadata: P
             }
             ChoiceMenu("文件格式", settings.format, OutputFormat.entries, { it.label }) { settings = settings.copy(format = it) }
             ChoiceMenu("成片尺寸", settings.size, sizes, SizeLimit::label) { settings = settings.withSize(it) }
-            Text("当前照片 · ${layout.canvas} px", color = Gold, style = MaterialTheme.typography.bodySmall)
             ChoiceMenu("输出色域", settings.colorSpace, OutputColor.entries, { it.label }) {
                 settings = settings.copy(colorSpace = it)
             }
@@ -841,27 +902,103 @@ private fun ExportOptions(workspace: Workspace, pixels: PixelChoice, metadata: P
                     settings = settings.copy(quality = it)
                 }
             }
-            if (settings.format == OutputFormat.TIFF) {
-                Text("TIFF 成片为 8 位。可保留品牌、机型和拍摄时间。", color = Muted,
-                    style = MaterialTheme.typography.bodySmall)
-            }
+            HorizontalDivider(color = Stroke)
+            ExportPreview(current, plan?.exceptionOrNull(), settings)
+            if (all && workspace.editing.size > 1) BatchSummary(summary, workspace.editing.size)
+            HorizontalDivider(color = Stroke)
             Toggle(if (settings.format == OutputFormat.TIFF) "保留基础信息" else "保留常用拍摄参数", settings.keepMetadata) { settings = settings.copy(keepMetadata = it) }
-            if (pixels.kind == PixelKind.EMBEDDED || all) {
+            if (settings.keepMetadata) {
+                ChoiceMenu("作者（Artist）", settings.credit, CreditSource.entries, CreditSource::label) {
+                    settings = settings.copy(credit = it)
+                }
+                if (settings.credit != CreditSource.NONE) {
+                    OutlinedTextField(settings.copyright, { settings = settings.copy(copyright = it.take(200)) },
+                        label = { Text("版权（留空沿用原文件）") }, placeholder = { Text("(C) 2026 Your Name") },
+                        modifier = Modifier.fillMaxWidth().testTag("copyright"), singleLine = true)
+                }
+                if (settings.format != OutputFormat.TIFF) {
+                    Toggle("在文件中保留拍摄位置（GPS）", settings.keepLocation) {
+                        settings = settings.copy(keepLocation = it)
+                        if (it) requestLocation()
+                    }
+                }
+            }
+            if (current?.pixels?.kind == PixelKind.EMBEDDED || all ||
+                plan?.exceptionOrNull()?.let { it is ExportFailure && it.code == "RAW_PREVIEW" } == true) {
                 Toggle("允许使用 RAW 内嵌预览尺寸", settings.allowEmbedded) {
                     settings = settings.copy(allowEmbedded = it)
                 }
             }
-            if (pixels.hdr || all) {
+            val hdr = info?.choices?.any { it.hdr } == true
+            if (hdr || all) {
+                if (settings.format == OutputFormat.JPEG && Build.VERSION.SDK_INT >= 34) {
+                    Toggle("保留 Ultra HDR（JPEG 增益图）", settings.keepHdr) { settings = settings.copy(keepHdr = it) }
+                }
                 Toggle("允许 HDR 照片转换为 SDR", settings.allowSdr) { settings = settings.copy(allowSdr = it) }
             }
-            Text("成片移除 GPS 和设备序列号。",
+            Text(if (settings.keepLocation) "成片移除设备序列号。" else "成片移除 GPS 和设备序列号。",
                 color = Muted, style = MaterialTheme.typography.bodySmall)
             Button({ output(settings, all) }, modifier = Modifier.fillMaxWidth().padding(top = 9.dp),
-                enabled = workspace.runningJob == null && !workspace.startInProgress &&
-                    (all || pixels.kind != PixelKind.EMBEDDED || settings.allowEmbedded) &&
-                    (all || !pixels.hdr || settings.allowSdr)) {
+                enabled = workspace.runningJob == null && !workspace.startInProgress && (all || current != null)) {
                 Text(if (all) "导出 ${workspace.editing.size} 张" else "保存照片")
             }
         }
+    }
+}
+
+/** The current photo's result, worked out the same way the exporter will write it. */
+@Composable
+private fun ExportPreview(plan: ExportPlan?, failure: Throwable?, settings: ExportSettings) {
+    val small = MaterialTheme.typography.bodySmall
+    if (plan == null) {
+        Text(failure?.message ?: "正在读取当前照片", color = if (failure != null) Danger else Muted, style = small)
+        return
+    }
+    Column(Modifier.fillMaxWidth().testTag("export-preview"), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Text("当前照片", color = Ink, style = MaterialTheme.typography.titleSmall)
+        Text("照片本体 ${plan.pixels.size} → 成片 ${plan.layout.canvas} px", color = Gold, style = small)
+        if (plan.scaled) Text("照片本体缩放为 ${plan.photo} px，边框按同一比例缩放。", color = Muted, style = small)
+        else if (plan.layout.canvas != plan.pixels.size) Text("照片像素不缩放，边框在外侧增加画布。", color = Muted, style = small)
+        Text("像素来源 · ${plan.pixels.kind.label}" + if (plan.hdr != HdrHandling.NONE) " · ${plan.hdr.label}" else "",
+            color = if (plan.hdr == HdrHandling.SDR || plan.pixels.kind == PixelKind.EMBEDDED) Gold else Muted, style = small)
+        val written = plan.fields
+        Text(when {
+            !settings.keepMetadata -> "文件不写入拍摄信息。"
+            written.isEmpty() -> "原文件没有可写入的拍摄信息。"
+            else -> "写入文件：" + written.joinToString("、")
+        }, color = Muted, style = small)
+        plan.tags[ExifInterface.TAG_ARTIST]?.let {
+            Text("作者 · $it", color = Muted, style = small)
+        }
+        plan.tags[ExifInterface.TAG_COPYRIGHT]?.let {
+            Text("版权 · $it", color = Muted, style = small)
+        }
+        for (note in plan.notes) Text(note, color = Gold, style = small)
+    }
+}
+
+@Composable
+private fun BatchSummary(summary: ExportSummary?, total: Int) {
+    val small = MaterialTheme.typography.bodySmall
+    Column(Modifier.fillMaxWidth().testTag("batch-summary"), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Text("整组 $total 张", color = Ink, style = MaterialTheme.typography.titleSmall)
+        if (summary == null) {
+            Text("正在逐张检查…", color = Muted, style = small)
+            return
+        }
+        if (summary.checked < summary.total) {
+            Text("已检查前 ${summary.checked} 张，其余导出时逐张处理。", color = Muted, style = small)
+        }
+        Text("像素来源 · " + summary.kinds.entries.sortedBy { it.key.ordinal }
+            .joinToString(" · ") { "${it.key.label} ${it.value} 张" }.ifEmpty { "无" }, color = Muted, style = small)
+        val lines = listOfNotNull(
+            "${summary.sdr} 张 HDR 转为 SDR".takeIf { summary.sdr > 0 },
+            "${summary.keptHdr} 张保留 Ultra HDR".takeIf { summary.keptHdr > 0 },
+            "${summary.scaled} 张按尺寸限制缩小".takeIf { summary.scaled > 0 },
+            "${summary.noCamera} 张没有相机信息，可用参数组补填".takeIf { summary.noCamera > 0 },
+            "${summary.located} 张写入拍摄位置".takeIf { summary.located > 0 },
+        )
+        for (line in lines) Text(line, color = Muted, style = small)
+        for ((reason, count) in summary.blocked) Text("$count 张不会导出：$reason", color = Danger, style = small)
     }
 }

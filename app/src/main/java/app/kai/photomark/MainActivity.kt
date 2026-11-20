@@ -164,6 +164,9 @@ private fun PhotoMark(workspace: Workspace) {
         presetToExport = null
     }
     val notification = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    val mediaLocation = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) workspace.locationGranted()
+    }
     val diagnostics = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { uri ->
         uri?.let(workspace::writeDiagnostics)
     }
@@ -219,7 +222,12 @@ private fun PhotoMark(workspace: Workspace) {
                 Screen.LIBRARY -> LibraryScreen(workspace, ::browse,
                     { pick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
                     { files.launch(arrayOf("*/*")) }, { folder.launch(null) })
-                Screen.EDITOR -> EditorScreen(workspace, { logo.launch(arrayOf("image/*")) }, { font.launch(arrayOf("*/*")) }) { settings, all ->
+                Screen.EDITOR -> EditorScreen(workspace, { logo.launch(arrayOf("image/*")) }, { font.launch(arrayOf("*/*")) }, {
+                    // Device library photos hide their GPS until the app may read media locations.
+                    if (BuildConfig.FLAVOR == "library" && !workspace.app.photos.locationAccess) {
+                        mediaLocation.launch(Manifest.permission.ACCESS_MEDIA_LOCATION)
+                    }
+                }) { settings, all ->
                     workspace.enqueue(settings, all)
                     if (Build.VERSION.SDK_INT >= 33 &&
                         context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED

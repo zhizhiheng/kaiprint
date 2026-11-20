@@ -81,7 +81,7 @@ class SharedPhotoTest {
 
                 compose.onNodeWithText("小红书 3:4").performScrollTo().performClick()
                 compose.onNodeWithText("导出").performClick()
-                compose.onNodeWithText("导出 2 张").performClick()
+                compose.onNodeWithText("导出 2 张").performScrollTo().performClick()
                 compose.waitUntilAtLeastOneExists(hasText("已导出 2 / 2 张"), 60_000)
             }
             val outputs = outputsFor(tag)

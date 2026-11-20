@@ -35,7 +35,7 @@ class PhotoWorkflowTest {
         val info = app.photos.info(group)
         val choice = info.choices.single()
         assertEquals(PixelSize(400, 600), choice.size)
-        assertEquals("NIKON ZR", info.metadata.values[MetadataField.MODEL])
+        assertEquals("ZR", info.metadata.values[MetadataField.MODEL])
         assertEquals("ISO 400", info.metadata.values[MetadataField.ISO])
         val source = app.photos.load(choice, 0)
         assertEquals(400, source.width)
@@ -95,7 +95,7 @@ class PhotoWorkflowTest {
         assumeTrue("仅在提供评测网站的 ZR NEF 样片时运行", file.isFile)
         val source = photo(file)
         val info = app.photos.info(PhotoGroup(source))
-        assertEquals("NIKON ZR", info.metadata.values[MetadataField.MODEL])
+        assertEquals("ZR", info.metadata.values[MetadataField.MODEL])
         assertTrue(info.choices.isNotEmpty())
         val choice = info.choices.firstOrNull { it.kind == PixelKind.RAW }
             ?: info.choices.single { it.kind == PixelKind.EMBEDDED }
@@ -144,7 +144,7 @@ class PhotoWorkflowTest {
                     val info = app.photos.info(PhotoGroup(result))
                     val expected = WatermarkLayout.calculate(PixelSize(640, 480), Templates.gallery.frame).canvas
                     assertEquals(expected, info.choices.single().size)
-                    assertEquals("NIKON ZR", info.metadata.values[MetadataField.MODEL])
+                    assertEquals("ZR", info.metadata.values[MetadataField.MODEL])
                 } finally { clearOutputs(job) }
             }
         } finally {
@@ -176,11 +176,10 @@ class PhotoWorkflowTest {
         Canvas(bitmap).drawColor(Color.rgb(60, 140, 175))
         val file = File(app.cacheDir, "roundtrip.tif")
         try {
-            assertTrue(RasterCodec.writeTiff(file, bitmap, OutputColor.DISPLAY_P3, PhotoMetadata(
-                exif = mapOf(ExifInterface.TAG_MAKE to "NIKON", ExifInterface.TAG_MODEL to "NIKON ZR")
-            )))
+            assertTrue(RasterCodec.writeTiff(file, bitmap, OutputColor.DISPLAY_P3,
+                mapOf(ExifInterface.TAG_MAKE to "NIKON", ExifInterface.TAG_MODEL to "NIKON ZR")))
             val info = app.photos.info(PhotoGroup(photo(file)))
-            assertEquals("NIKON ZR", info.metadata.values[MetadataField.MODEL])
+            assertEquals("ZR", info.metadata.values[MetadataField.MODEL])
             assertEquals(PixelSize(311, 197), info.choices.single().size)
             val decoded = app.photos.load(info.choices.single(), 0, OutputColor.DISPLAY_P3)
             assertEquals(OutputColor.DISPLAY_P3.androidColorSpace(), decoded.colorSpace)
@@ -217,7 +216,7 @@ class PhotoWorkflowTest {
                 WatermarkLayer("custom-logo", LayerKind.LOGO, logoFile = logo.name))
             val manager = PresetArchive(app)
             manager.write(template, Uri.fromFile(archive))
-            val decoded = manager.read(Uri.fromFile(archive))
+            val decoded = manager.read(Uri.fromFile(archive)).template
             assertEquals(template.title, decoded.title)
             assertEquals(template.layers.size, decoded.layers.size)
             assertEquals(template.layers.first { it.kind == LayerKind.BRAND },

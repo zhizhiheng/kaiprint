@@ -85,6 +85,8 @@ class EditorUiTest {
             compose.waitUntilAtLeastOneExists(hasText("自动 · Nikon Z", substring = true), 10_000)
             compose.onNodeWithText("横版字标").performClick().assertIsSelected()
             compose.onNodeWithText("尼康黄底方标").performClick().assertIsSelected()
+            compose.onNodeWithText("机型标志").performClick().assertIsSelected()
+            compose.onNodeWithText("按每张照片的机型匹配", substring = true).assertIsDisplayed()
             compose.onNodeWithText("底边靠左", substring = true).performClick()
             compose.onNodeWithText("底边居中").performClick()
             compose.onNodeWithText("底边居中", substring = true).assertIsDisplayed()
@@ -93,7 +95,9 @@ class EditorUiTest {
             compose.onNodeWithText("Canon").performClick()
             compose.onNodeWithText("Canon", substring = true).assertIsDisplayed()
             compose.onNodeWithText("导出").performClick()
-            compose.onNodeWithText("保存照片").performClick()
+            compose.onNodeWithText("照片本体 360 × 240", substring = true).assertIsDisplayed()
+            compose.onNodeWithText("写入文件：品牌、机型", substring = true).assertIsDisplayed()
+            compose.onNodeWithText("保存照片").performScrollTo().performClick()
             compose.waitUntilAtLeastOneExists(hasText("已导出 1 / 1 张"), 30_000)
         } finally {
             resolver.query(collection, arrayOf(MediaStore.Images.Media._ID),

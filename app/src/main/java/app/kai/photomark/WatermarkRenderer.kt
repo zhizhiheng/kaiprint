@@ -7,27 +7,33 @@ import android.graphics.BitmapRegionDecoder
 import android.graphics.BitmapShader
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Gainmap
 import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Picture
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffColorFilter
+import android.graphics.PorterDuffXfermode
 import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.Typeface
 import android.net.Uri
+import android.os.Build
 import android.text.Layout
 import android.text.StaticLayout
 import android.text.TextPaint
 import android.text.TextUtils
 import android.util.LruCache
+import androidx.annotation.RequiresApi
 import com.caverock.androidsvg.SVG
 import java.io.File
 import java.io.IOException
 import kotlin.math.ceil
 import kotlin.math.hypot
+import kotlin.math.ln
 import kotlin.math.max
+import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.random.Random
 
@@ -73,6 +79,7 @@ class WatermarkRenderer(private val context: Context, private val photos: PhotoR
         overrides: Map<MetadataField, String>,
         outputColor: OutputColor = OutputColor.SRGB,
         format: OutputFormat = OutputFormat.JPEG,
+        keepHdr: Boolean = false,
         checkpoint: () -> Unit,
     ): Bitmap {
         val bytes = layout.canvas.width.toLong() * layout.canvas.height * 4
@@ -90,22 +97,64 @@ class WatermarkRenderer(private val context: Context, private val photos: PhotoR
                 choice.orientation == 1 && !choice.hdr &&
                 choice.source.format in listOf(PhotoFormat.JPEG, PhotoFormat.PNG, PhotoFormat.WEBP, PhotoFormat.HEIF)
             val filled = regionEligible && drawRegions(canvas, choice, layout.photo, outputColor, checkpoint)
+            var gainmap: Gainmap? = null
             if (!filled) {
                 val photoEdge = max(layout.photo.width, layout.photo.height).roundToInt()
                 val fullSize = if (photoEdge >= choice.size.longEdge) 0 else photoEdge.coerceAtLeast(1)
-                val bitmap = photos.load(choice, fullSize, outputColor)
+                val bitmap = photos.load(choice, fullSize, outputColor, keepGainmap = keepHdr)
                 try {
                     drawPhoto(canvas, bitmap, layout.photo)
+                    if (keepHdr && Build.VERSION.SDK_INT >= 34) gainmap = bitmap.gainmap
                 } finally {
-                    bitmap.recycle()
+                    if (gainmap == null) bitmap.recycle()
                 }
             }
             checkpoint()
             drawWatermark(canvas, output, layout, draft, metadata, overrides)
+            if (keepHdr && gainmap != null && Build.VERSION.SDK_INT >= 34) {
+                output.gainmap = extendGainmap(gainmap, layout)
+                gainmap.gainmapContents.recycle()
+            }
             return output
         } catch (error: Throwable) {
             output.recycle()
             throw error
+        }
+    }
+
+    /**
+     * Places the photo's gain map on a canvas-sized map. Borders and frames get the neutral value, so only the
+     * photo brightens on an HDR screen and the frame stays the white it is on an SDR screen.
+     */
+    @RequiresApi(34)
+    private fun extendGainmap(source: Gainmap, layout: WatermarkLayout): Gainmap {
+        val contents = source.gainmapContents
+        val scale = contents.width / layout.photo.width
+        val width = (layout.canvas.width * scale).roundToInt().coerceAtLeast(1)
+        val height = (layout.canvas.height * scale).roundToInt().coerceAtLeast(1)
+        val single = contents.config == Bitmap.Config.ALPHA_8
+        val map = Bitmap.createBitmap(width, height, if (single) Bitmap.Config.ALPHA_8 else Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(map)
+        val neutral = FloatArray(3) { channel ->
+            val low = ln(source.ratioMin[channel].toDouble().coerceAtLeast(1e-6))
+            val high = ln(source.ratioMax[channel].toDouble().coerceAtLeast(1e-6))
+            val position = if (high - low < 1e-9) 0.0 else ((0.0 - low) / (high - low)).coerceIn(0.0, 1.0)
+            position.pow(source.gamma[channel].toDouble()).toFloat()
+        }
+        fun byte(value: Float) = (value * 255f).roundToInt().coerceIn(0, 255)
+        canvas.drawColor(if (single) Color.argb(byte(neutral[0]), 0, 0, 0)
+            else Color.argb(255, byte(neutral[0]), byte(neutral[1]), byte(neutral[2])), PorterDuff.Mode.SRC)
+        val photo = layout.photo
+        canvas.drawBitmap(contents, null, RectF(photo.left * scale, photo.top * scale, photo.right * scale,
+            photo.bottom * scale), Paint(Paint.FILTER_BITMAP_FLAG).apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC) })
+        return Gainmap(map).apply {
+            setRatioMin(source.ratioMin[0], source.ratioMin[1], source.ratioMin[2])
+            setRatioMax(source.ratioMax[0], source.ratioMax[1], source.ratioMax[2])
+            setGamma(source.gamma[0], source.gamma[1], source.gamma[2])
+            setEpsilonSdr(source.epsilonSdr[0], source.epsilonSdr[1], source.epsilonSdr[2])
+            setEpsilonHdr(source.epsilonHdr[0], source.epsilonHdr[1], source.epsilonHdr[2])
+            displayRatioForFullHdr = source.displayRatioForFullHdr
+            minDisplayRatioForHdrTransition = source.minDisplayRatioForHdrTransition
         }
     }
 
@@ -194,10 +243,42 @@ class WatermarkRenderer(private val context: Context, private val photos: PhotoR
             }
         } else emptyList()
         if (template.frame.hairline) drawFrameOutline(canvas, layout)
-        val captions = template.captions.filterKeys { it in MetadataField.captionFields }
-        val shown = if (captions.isEmpty()) metadata else metadata.copy(values = metadata.values + captions)
-        drawLayers(canvas, output, layout, template, shown, overrides, palette)
+        drawLayers(canvas, output, layout, template, template.shown(metadata, place(template, metadata)), overrides, palette)
     }
+
+    /**
+     * A preset rendered on a generated landscape with sample camera details, for preset packages. It contains
+     * no photo of the person sharing the preset.
+     */
+    fun sample(template: WatermarkTemplate, edge: Int = 1200): Bitmap {
+        val photo = Bitmap.createBitmap(1500, 1000, Bitmap.Config.ARGB_8888)
+        Canvas(photo).apply {
+            drawPaint(Paint().apply {
+                shader = android.graphics.LinearGradient(0f, 0f, 0f, 1000f,
+                    intArrayOf(0xFF2E4A62.toInt(), 0xFFC98B5B.toInt(), 0xFF3B3A36.toInt()), floatArrayOf(0f, .62f, 1f),
+                    Shader.TileMode.CLAMP)
+            })
+            drawCircle(1040f, 560f, 120f, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFF2D49B.toInt() })
+            drawRect(0f, 700f, 1500f, 1000f, Paint().apply { color = 0xFF2A2B28.toInt() })
+        }
+        val metadata = PhotoMetadata(mapOf(
+            MetadataField.MAKE to "Nikon", MetadataField.MODEL to "Z6III", MetadataField.LENS to "NIKKOR Z 24-70mm f/4 S",
+            MetadataField.FOCAL to "50 mm", MetadataField.APERTURE to "f/4", MetadataField.SHUTTER to "1/125 s",
+            MetadataField.ISO to "ISO 400", MetadataField.DATE to "2026-11-20 17:42:10",
+            MetadataField.FOCAL_EQUIVALENT to "50 mm 等效", MetadataField.EXPOSURE_BIAS to "-0.3 EV",
+        ))
+        try {
+            val layout = WatermarkLayout.calculate(PixelSize(photo.width, photo.height), template, metadata = metadata)
+            return preview(photo, layout, template, metadata, emptyMap(), edge)
+        } finally {
+            photo.recycle()
+        }
+    }
+
+    /** The automatic location line, or null to keep the hand-written one. */
+    fun place(template: WatermarkTemplate, metadata: PhotoMetadata): String? =
+        runCatching { Places.describe(template.place, metadata.latitude, metadata.longitude) { Places.index(context) } }
+            .getOrNull()
 
     private fun photoSample(output: Bitmap, layout: WatermarkLayout, maximumEdge: Int): Bitmap {
         val scaleX = output.width.toFloat() / layout.canvas.width
@@ -260,7 +341,7 @@ class WatermarkRenderer(private val context: Context, private val photos: PhotoR
         palette: List<Int>,
     ) {
         for (layer in template.layers) {
-            if (!layer.visible || layer.opacity <= 0f) continue
+            if (!layer.visible || layer.opacity <= 0f || layer.area in layout.collapsed) continue
             val area = layout.area(layer)
             if (area.width < 1f || area.height < 1f) continue
             val marker = getMarker(layer, area, layout.reference, metadata, overrides, palette) ?: continue
@@ -328,10 +409,13 @@ class WatermarkRenderer(private val context: Context, private val photos: PhotoR
             }
             LayerKind.BRAND -> {
                 val brand = layer.brand.resolve(metadata, overrides) ?: return null
-                val graphic = brand.graphic(layer.brandStyle) ?: return null
-                val artwork = brandArtwork(graphic.asset) ?: return null
+                val graphic = brand.graphic(layer.brandStyle, metadata, overrides) ?: return null
+                val artwork = brandArtwork(graphic.file) ?: return null
                 val aspect = artwork.aspectFor(graphic)
-                val w = minOf(size, availableWidth, availableHeight * aspect)
+                // Model marks run from a short "Z8" to a long "EOS R5 Mark II". Sizing them to one height keeps
+                // every body equally prominent, while the layer size still caps the usual Z-plus-number mark.
+                val width = if (graphic.model) size * maxOf(1f, aspect / MODEL_ASPECT) else size
+                val w = minOf(width, availableWidth, availableHeight * aspect)
                 val h = w / aspect
                 Marker(w, h, layer.background, alpha) { canvas ->
                     artwork.draw(canvas, RectF(0f, 0f, w, h), graphic, layer.brandTone, alpha)
@@ -365,16 +449,16 @@ class WatermarkRenderer(private val context: Context, private val photos: PhotoR
                 }
             }
             LayerKind.TEXT, LayerKind.EXIF -> {
-                val text = if (layer.kind == LayerKind.TEXT) layer.text.trim()
-                    else metadata.display(layer.fields, overrides)
-                if (text.isBlank()) return null
-                textMarker(text, layer, size, availableWidth, availableHeight, alpha)
+                val parts = if (layer.kind == LayerKind.TEXT) listOf(layer.text.trim())
+                    else metadata.parts(layer.fields, overrides)
+                if (parts.all(String::isBlank)) return null
+                textMarker(parts, layer, size, availableWidth, availableHeight, alpha)
             }
         }
     }
 
     private fun textMarker(
-        text: String, layer: WatermarkLayer, size: Float, width: Float, height: Float, alpha: Int,
+        parts: List<String>, layer: WatermarkLayer, size: Float, width: Float, height: Float, alpha: Int,
     ): Marker? {
         val textColor = color(layer.color, Color.WHITE)
         val textPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -386,6 +470,13 @@ class WatermarkRenderer(private val context: Context, private val photos: PhotoR
             )
             typeface = Typeface.create(base, if (layer.bold) Typeface.BOLD else Typeface.NORMAL)
             textSize = minOf(size, height * .86f)
+        }
+        var text = parts.joinToString(PhotoMetadata.SEPARATOR)
+        if (parts.size > 1) {
+            // Shrink a little before wrapping, then break between values so no single value trails alone.
+            val desired = Layout.getDesiredWidth(text, textPaint)
+            if (desired > width && desired * .8f <= width) textPaint.textSize *= width / desired
+            else if (desired > width) text = balancedLines(parts, textPaint, width)
         }
         fun layout(): StaticLayout {
             val desired = Layout.getDesiredWidth(text, textPaint)
@@ -423,6 +514,22 @@ class WatermarkRenderer(private val context: Context, private val photos: PhotoR
             }
             result.draw(canvas)
         }
+    }
+
+    private fun balancedLines(parts: List<String>, paint: TextPaint, width: Float): String {
+        fun line(from: Int, to: Int) = parts.subList(from, to).joinToString(PhotoMetadata.SEPARATOR)
+        val candidates = buildList {
+            for (a in 1 until parts.size) add(listOf(line(0, a), line(a, parts.size)))
+            for (a in 1 until parts.size) for (b in a + 1 until parts.size) {
+                add(listOf(line(0, a), line(a, b), line(b, parts.size)))
+            }
+        }
+        fun widest(lines: List<String>) = lines.maxOf { Layout.getDesiredWidth(it, paint) }
+        val fitting = candidates.filter { widest(it) <= width }
+        val best = if (fitting.isNotEmpty()) {
+            fitting.minWith(compareBy<List<String>>({ it.size }, { widest(it) }))
+        } else candidates.minBy(::widest)
+        return best.joinToString("\n")
     }
 
     private fun drawTiled(canvas: Canvas, area: PixelRect, layer: WatermarkLayer, marker: Marker, reference: Float) {
@@ -478,9 +585,12 @@ class WatermarkRenderer(private val context: Context, private val photos: PhotoR
         return BitmapFactory.decodeFile(file.absolutePath)?.also { logos.put(name, it) }
     }
 
-    fun brandThumbnail(brand: BrandMark, tone: BrandTone, style: BrandStyle = BrandStyle.ORIGINAL): Bitmap? {
-        val graphic = brand.graphic(style) ?: return null
-        val artwork = brandArtwork(graphic.asset) ?: return null
+    fun brandThumbnail(
+        brand: BrandMark, tone: BrandTone, style: BrandStyle = BrandStyle.ORIGINAL,
+        metadata: PhotoMetadata = PhotoMetadata(), overrides: Map<MetadataField, String> = emptyMap(),
+    ): Bitmap? {
+        val graphic = brand.graphic(style, metadata, overrides) ?: return null
+        val artwork = brandArtwork(graphic.file) ?: return null
         val aspect = artwork.aspectFor(graphic)
         val width = minOf(240f, 112f * aspect).roundToInt().coerceAtLeast(1)
         val height = (width / aspect).roundToInt().coerceAtLeast(1)
@@ -489,10 +599,10 @@ class WatermarkRenderer(private val context: Context, private val photos: PhotoR
         return bitmap
     }
 
-    private fun brandArtwork(name: String): BrandArtwork? {
-        brands.get(name)?.let { return it }
+    private fun brandArtwork(file: String): BrandArtwork? {
+        brands.get(file)?.let { return it }
         return runCatching {
-            val svg = SVG.getFromAsset(context.assets, "brands/$name.svg")
+            val svg = SVG.getFromAsset(context.assets, file)
             val view = svg.documentViewBox
             val w = view?.width() ?: svg.documentWidth
             val h = view?.height() ?: svg.documentHeight
@@ -502,7 +612,7 @@ class WatermarkRenderer(private val context: Context, private val photos: PhotoR
                 svg.renderToPicture((w * scale).roundToInt().coerceAtLeast(1),
                     (h * scale).roundToInt().coerceAtLeast(1)), w / h,
             )
-        }.getOrNull()?.also { brands.put(name, it) }
+        }.getOrNull()?.also { brands.put(file, it) }
     }
 
     private data class BrandArtwork(val picture: Picture, val aspect: Float) {
@@ -559,6 +669,9 @@ class WatermarkRenderer(private val context: Context, private val photos: PhotoR
         val draw: (Canvas) -> Unit,
     )
 }
+
+/** The width-to-height ratio of a typical model mark such as Z6III, used to size longer marks alike. */
+private const val MODEL_ASPECT = 3.2f
 
 fun color(value: String, fallback: Int): Int = runCatching { Color.parseColor(value) }.getOrDefault(fallback)
 private fun PixelRect.asRect() = RectF(left, top, right, bottom)

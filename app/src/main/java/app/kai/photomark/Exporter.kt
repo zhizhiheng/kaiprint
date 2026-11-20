@@ -60,19 +60,18 @@ class Exporter(private val app: PhotoMarkApp) {
         val jobContext = currentCoroutineContext()
         try {
             val info = app.photos.info(PhotoGroup(input.photo, input.companion))
-            val choice = selectPixels(info, input.pixelKind, settings)
-            val layout = WatermarkLayout.calculate(choice.size, template, settings, info.metadata, input.overrides)
+            val plan = planExport(info, input.pixelKind, template, settings, input.overrides, Build.VERSION.SDK_INT)
             jobContext.ensureActive()
-            val bitmap = app.renderer.renderForExport(choice, layout, template, info.metadata, input.overrides,
-                settings.colorSpace, settings.format) {
+            val bitmap = app.renderer.renderForExport(plan.pixels, plan.layout, template, info.metadata, input.overrides,
+                settings.colorSpace, settings.format, plan.hdr == HdrHandling.KEPT) {
                 jobContext.ensureActive()
             }
             try {
-                encode(scratch, bitmap, settings, info.metadata)
+                encode(scratch, bitmap, settings, plan)
             } finally {
                 bitmap.recycle()
             }
-            if (settings.keepMetadata && settings.format != OutputFormat.TIFF) writeExif(scratch, info.metadata, layout.canvas)
+            if (settings.keepMetadata && settings.format != OutputFormat.TIFF) writeExif(scratch, plan)
             jobContext.ensureActive()
 
             val record = reservation ?: resolver.insert(collection, ContentValues().apply {
@@ -138,9 +137,9 @@ class Exporter(private val app: PhotoMarkApp) {
         }
     }
 
-    private fun encode(file: File, bitmap: Bitmap, settings: ExportSettings, metadata: PhotoMetadata) {
+    private fun encode(file: File, bitmap: Bitmap, settings: ExportSettings, plan: ExportPlan) {
         if (settings.format == OutputFormat.TIFF) {
-            val success = RasterCodec.writeTiff(file, bitmap, settings.colorSpace, metadata.takeIf { settings.keepMetadata })
+            val success = RasterCodec.writeTiff(file, bitmap, settings.colorSpace, plan.tags.takeIf { settings.keepMetadata })
             if (!success) throw ExportFailure("ENCODE", "TIFF 编码失败")
             return
         }
@@ -160,9 +159,10 @@ class Exporter(private val app: PhotoMarkApp) {
         }
     }
 
-    private fun writeExif(file: File, metadata: PhotoMetadata, size: PixelSize) {
+    private fun writeExif(file: File, plan: ExportPlan) {
+        val size = plan.layout.canvas
         val exif = ExifInterface(file)
-        for ((tag, raw) in metadata.exif) {
+        for ((tag, raw) in plan.tags) {
             val value = if (tag == ExifInterface.TAG_FOCAL_LENGTH && '/' !in raw) {
                 raw.toDoubleOrNull()?.let { "${(it * 1000).toLong()}/1000" } ?: raw
             } else raw
@@ -173,6 +173,7 @@ class Exporter(private val app: PhotoMarkApp) {
         exif.setAttribute(ExifInterface.TAG_IMAGE_LENGTH, size.height.toString())
         exif.setAttribute(ExifInterface.TAG_PIXEL_X_DIMENSION, size.width.toString())
         exif.setAttribute(ExifInterface.TAG_PIXEL_Y_DIMENSION, size.height.toString())
+        if (plan.latitude != null && plan.longitude != null) exif.setLatLong(plan.latitude, plan.longitude)
         exif.saveAttributes()
     }
 
@@ -187,6 +188,7 @@ internal fun selectPixels(
     info: PhotoInfo,
     kind: PixelKind?,
     settings: ExportSettings,
+    sdk: Int = 0,
 ): PixelChoice {
     val candidate = if (kind == null) info.choices.firstOrNull { it.kind != PixelKind.EMBEDDED }
         ?: info.choices.firstOrNull() else info.choices.firstOrNull { it.kind == kind }
@@ -194,7 +196,9 @@ internal fun selectPixels(
     if (choice.kind == PixelKind.EMBEDDED && !settings.allowEmbedded) {
         throw ExportFailure("RAW_PREVIEW", "此文件只能使用内嵌预览，请允许按预览尺寸导出或导入伴随图")
     }
-    if (choice.hdr && !settings.allowSdr) throw ExportFailure("HDR", "此照片需要允许转换为 SDR")
+    if (choice.hdr && !settings.allowSdr && !choice.keepsHdr(settings, sdk)) {
+        throw ExportFailure("HDR", "此照片需要允许转换为 SDR")
+    }
     return choice
 }
 

@@ -48,11 +48,11 @@ internal object RasterCodec {
         }
     }
 
-    fun writeTiff(file: File, bitmap: Bitmap, color: OutputColor, metadata: PhotoMetadata?): Boolean =
+    fun writeTiff(file: File, bitmap: Bitmap, color: OutputColor, tags: Map<String, String>?): Boolean =
         available && nativeWriteTiff(
             file.absolutePath, bitmap, color == OutputColor.DISPLAY_P3,
-            metadata?.exif?.get(ExifInterface.TAG_MAKE),
-            metadata?.exif?.get(ExifInterface.TAG_MODEL),
-            metadata?.exif?.get(ExifInterface.TAG_DATETIME_ORIGINAL),
+            tags?.get(ExifInterface.TAG_MAKE),
+            tags?.get(ExifInterface.TAG_MODEL),
+            tags?.get(ExifInterface.TAG_DATETIME_ORIGINAL),
         )
 }

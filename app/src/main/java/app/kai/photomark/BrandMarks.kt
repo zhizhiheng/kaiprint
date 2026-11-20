@@ -12,6 +12,8 @@ enum class BrandTone(val label: String) {
 @Serializable
 enum class BrandStyle(val label: String) {
     ORIGINAL("原版"), WORDMARK("横版字标"), SYMBOL("独立图标"), SQUARE("方形"),
+    /** The body's own mark, such as Z6III or α7 IV. Bodies without one show the original brand mark. */
+    MODEL("机型标志"),
 }
 
 internal enum class BrandPlacement(val label: String, val area: LayerArea, val anchor: Anchor, val column: LayerColumn) {
@@ -34,7 +36,10 @@ internal enum class BrandPlacement(val label: String, val area: LayerArea, val a
         layer.x == 0f && layer.y == 0f && !layer.tile
 }
 
-internal data class BrandGraphic(val asset: String, val tintable: Boolean = true, val squareBadge: Boolean = false)
+internal data class BrandGraphic(
+    val asset: String, val tintable: Boolean = true, val squareBadge: Boolean = false,
+    val file: String = "brands/$asset.svg", val model: Boolean = false,
+)
 
 @Serializable
 enum class BrandMark(val label: String, val asset: String? = null, val tintable: Boolean = true) {
@@ -77,6 +82,7 @@ enum class BrandMark(val label: String, val asset: String? = null, val tintable:
                 HUAWEI -> BrandGraphic("huawei-wordmark")
                 else -> original
             }
+            BrandStyle.MODEL -> original
             BrandStyle.SYMBOL -> when (this) {
                 HUAWEI -> BrandGraphic("huawei-symbol")
                 else -> original
@@ -88,6 +94,14 @@ enum class BrandMark(val label: String, val asset: String? = null, val tintable:
                 else -> original.copy(squareBadge = true)
             }
         }
+    }
+
+    /** Like [graphic], but finds the model mark for this photo's camera. */
+    internal fun graphic(style: BrandStyle, metadata: PhotoMetadata, overrides: Map<MetadataField, String>): BrandGraphic? {
+        if (style != BrandStyle.MODEL) return graphic(style)
+        val mark = Cameras.mark(this, overrides[MetadataField.MAKE] ?: metadata.values[MetadataField.MAKE],
+            overrides[MetadataField.MODEL] ?: metadata.values[MetadataField.MODEL])
+        return mark?.let { BrandGraphic(it.name, file = it.file, model = true) } ?: graphic(BrandStyle.ORIGINAL)
     }
 
     fun resolve(metadata: PhotoMetadata, overrides: Map<MetadataField, String>): BrandMark? =

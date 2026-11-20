@@ -77,10 +77,20 @@ data class PhotoMetadata(
     val sensorWidth: Int = 0,
     val sensorHeight: Int = 0,
     val rawCompression: Int? = null,
+    val latitude: Double? = null,
+    val longitude: Double? = null,
 ) {
-    fun display(fields: List<MetadataField>, overrides: Map<MetadataField, String>): String =
+    val hasLocation get() = latitude != null && longitude != null
+
+    fun parts(fields: List<MetadataField>, overrides: Map<MetadataField, String>): List<String> =
         fields.mapNotNull { (overrides[it] ?: values[it])?.trim()?.takeIf(String::isNotEmpty) }
-            .joinToString("   ·   ")
+
+    fun display(fields: List<MetadataField>, overrides: Map<MetadataField, String>): String =
+        parts(fields, overrides).joinToString(SEPARATOR)
+
+    companion object {
+        const val SEPARATOR = "   ·   "
+    }
 }
 
 @Serializable
@@ -153,6 +163,8 @@ data class Frame(
     val background: FrameBackground = FrameBackground.SOLID,
     val blur: Float = .043f,
     val tintStrength: Float = .10f,
+    /** Shrinks a parameter strip to the side margin when a photo has nothing to print in it. */
+    val collapseEmpty: Boolean = true,
 )
 
 @Serializable
@@ -238,7 +250,15 @@ data class WatermarkTemplate(
     val layers: List<WatermarkLayer> = emptyList(),
     val version: Int = 1,
     val captions: Map<MetadataField, String> = emptyMap(),
-)
+    val place: PlaceStyle = PlaceStyle.MANUAL,
+) {
+    /** Photo details with this template's titles, credit and location, before per-photo overrides. */
+    fun shown(metadata: PhotoMetadata, place: String? = null): PhotoMetadata {
+        val extra = captions.filterKeys { it in MetadataField.captionFields }
+            .let { if (place != null) it + (MetadataField.LOCATION to place) else it }
+        return if (extra.isEmpty()) metadata else metadata.copy(values = metadata.values + extra)
+    }
+}
 
 @Serializable
 data class EditDraft(
@@ -278,6 +298,12 @@ enum class OutputColor(val label: String) {
     SRGB("sRGB"), DISPLAY_P3("Display P3")
 }
 
+/** Where the Artist tag of a finished photo comes from. */
+@Serializable
+enum class CreditSource(val label: String) {
+    SOURCE("沿用原文件"), WATERMARK("使用水印署名"), NONE("不写入"),
+}
+
 @Serializable
 data class ExportSettings(
     val format: OutputFormat = OutputFormat.JPEG,
@@ -288,6 +314,13 @@ data class ExportSettings(
     val allowSdr: Boolean = true,
     val colorSpace: OutputColor = OutputColor.SRGB,
     val shortEdge: Int = 0,
+    val credit: CreditSource = CreditSource.SOURCE,
+    /** Replaces the source Copyright tag when not blank. */
+    val copyright: String = "",
+    /** Writes the photo's own GPS position into the file. Printing a place on the photo is separate. */
+    val keepLocation: Boolean = false,
+    /** Keeps the gain map of an Ultra HDR JPEG when the output is JPEG too. */
+    val keepHdr: Boolean = true,
 ) {
     val size get() = SizeLimit(longEdge, shortEdge)
 
@@ -328,6 +361,8 @@ data class PixelRect(val left: Float, val top: Float, val right: Float, val bott
 data class WatermarkLayout(
     val canvas: PixelSize, val photo: PixelRect, val reference: Float,
     private val topBrandHeight: Float = 0f, private val bottomBrandHeight: Float = 0f,
+    /** Edges whose strip was shrunk because nothing in it applies to this photo. */
+    val collapsed: Set<LayerArea> = emptySet(),
 ) {
     fun area(layer: WatermarkLayer): PixelRect {
         val band = area(layer.area)
@@ -364,8 +399,28 @@ data class WatermarkLayout(
             val layers = if (metadata == null) template.layers else template.layers.filter {
                 it.kind != LayerKind.BRAND || it.brand.resolve(metadata, overrides) != null
             }
-            return calculate(source, template.frame, SizeLimit(maximumEdge, maximumShortEdge), layers)
+            val empty = if (metadata == null || !template.frame.collapseEmpty) emptySet() else {
+                // An automatic place is counted as present; the strip stays if the city lookup comes back empty.
+                val shown = template.shown(metadata, "·".takeIf { template.place != PlaceStyle.MANUAL && metadata.hasLocation })
+                edges.filter { area ->
+                    val here = layers.filter { it.area == area && it.visible && it.opacity > 0f }
+                    here.isNotEmpty() && here.none { it.hasContent(shown, overrides) }
+                }.toSet()
+            }
+            return calculate(source, template.frame, SizeLimit(maximumEdge, maximumShortEdge), layers, empty)
         }
+
+        private val edges = listOf(LayerArea.TOP, LayerArea.BOTTOM, LayerArea.LEFT, LayerArea.RIGHT)
+
+        private fun WatermarkLayer.hasContent(metadata: PhotoMetadata, overrides: Map<MetadataField, String>) =
+            when (kind) {
+                LayerKind.TEXT -> text.isNotBlank()
+                LayerKind.EXIF -> metadata.display(fields, overrides).isNotBlank()
+                LayerKind.BRAND -> brand.resolve(metadata, overrides) != null
+                LayerKind.LOGO -> logoFile != null
+                LayerKind.PALETTE -> true
+                LayerKind.LINE -> false
+            }
 
         fun calculate(
             source: PixelSize, template: WatermarkTemplate, settings: ExportSettings,
@@ -380,7 +435,7 @@ data class WatermarkLayout(
             val (logos, others) = visible.partition { it.kind == LayerKind.BRAND && it.reserveBrandSpace }
             if (logos.isEmpty()) return EdgeSpace(padding)
             val height = logos.maxOf {
-                val aspectAllowance = if (it.brandStyle == BrandStyle.WORDMARK) .48f else 1f
+                val aspectAllowance = if (it.brandStyle == BrandStyle.WORDMARK || it.brandStyle == BrandStyle.MODEL) .48f else 1f
                 (it.size * aspectAllowance).coerceIn(.04f, .75f) + 2 * it.margin.coerceIn(0f, .035f)
             }
             val sharedColumn = logos.any { logo -> others.any {
@@ -392,13 +447,21 @@ data class WatermarkLayout(
         fun calculate(source: PixelSize, frame: Frame, maximumEdge: Int = 0, maximumShortEdge: Int = 0) =
             calculate(source, frame, SizeLimit(maximumEdge, maximumShortEdge), emptyList())
 
-        private fun calculate(source: PixelSize, frame: Frame, limit: SizeLimit, layers: List<WatermarkLayer>): WatermarkLayout {
+        private fun calculate(
+            source: PixelSize, frame: Frame, limit: SizeLimit, layers: List<WatermarkLayer>,
+            empty: Set<LayerArea> = emptySet(),
+        ): WatermarkLayout {
             require(source.width > 0 && source.height > 0)
             val unit = source.shortEdge.toFloat()
-            val left = (frame.left.coerceIn(0f, 1f) * unit).roundToInt()
-            val right = (frame.right.coerceIn(0f, 1f) * unit).roundToInt()
-            val topSpace = edgeSpace(layers, LayerArea.TOP, frame.top.coerceIn(0f, 1f))
-            val bottomSpace = edgeSpace(layers, LayerArea.BOTTOM, frame.bottom.coerceIn(0f, 1f))
+            fun edge(area: LayerArea, value: Float, across: Float) =
+                (if (area in empty) minOf(value, across) else value).coerceIn(0f, 1f)
+            val sides = maxOf(frame.left, frame.right)
+            val ends = maxOf(frame.top, frame.bottom)
+            val left = (edge(LayerArea.LEFT, frame.left, ends) * unit).roundToInt()
+            val right = (edge(LayerArea.RIGHT, frame.right, ends) * unit).roundToInt()
+            val kept = layers.filterNot { it.area in empty }
+            val topSpace = edgeSpace(kept, LayerArea.TOP, edge(LayerArea.TOP, frame.top, sides))
+            val bottomSpace = edgeSpace(kept, LayerArea.BOTTOM, edge(LayerArea.BOTTOM, frame.bottom, sides))
             val top = (topSpace.padding * unit).roundToInt()
             val bottom = (bottomSpace.padding * unit).roundToInt()
             var width = source.width + left + right
@@ -422,7 +485,7 @@ data class WatermarkLayout(
                 (photoLeft + source.width) * scale, (photoTop + source.height) * scale,
             )
             return WatermarkLayout(canvas, photo, unit * scale, (topSpace.brandRow * unit).roundToInt() * scale,
-                (bottomSpace.brandRow * unit).roundToInt() * scale)
+                (bottomSpace.brandRow * unit).roundToInt() * scale, empty)
         }
     }
 }

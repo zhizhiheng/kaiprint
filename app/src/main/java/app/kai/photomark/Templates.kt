@@ -69,6 +69,18 @@ object Templates {
         ),
     )
 
+    val modelPlate = WatermarkTemplate(
+        "model-plate", "机型铭牌",
+        Frame(.06f, .06f, .06f, .085f, "#F6F4EF", hairline = true),
+        listOf(
+            WatermarkLayer("brand", LayerKind.BRAND, area = LayerArea.BOTTOM, anchor = Anchor.CENTER,
+                size = .24f, margin = .026f, brandStyle = BrandStyle.MODEL, reserveBrandSpace = true),
+            WatermarkLayer("exif", LayerKind.EXIF, fields = listOf(MetadataField.LENS) + exposure,
+                area = LayerArea.BOTTOM, anchor = Anchor.TOP_CENTER, size = .025f, margin = .018f,
+                color = "#4B4841", type = TypeStyle.MONO),
+        ),
+    )
+
     val brandStamp = WatermarkTemplate(
         "brand-stamp", "品牌角标",
         layers = listOf(
@@ -169,8 +181,32 @@ object Templates {
         ),
     )
 
-    val all = listOf(gallery, zr, frostedGallery, frostedJournal, colorAtlas, fieldNotes, archiveCard,
+    val all = listOf(gallery, modelPlate, zr, frostedGallery, frostedJournal, colorAtlas, fieldNotes, archiveCard,
         brandStamp, signature, dark, editorial, proof)
+
+    /**
+     * A built-in template picked from the strip keeps the canvas shape, titles, credit and location choice
+     * already made, so its thumbnail and the edit after tapping it look the same.
+     */
+    fun adopt(template: WatermarkTemplate, current: WatermarkTemplate): WatermarkTemplate =
+        if (template !in all) template else template.copy(
+            captions = current.captions,
+            place = current.place,
+            frame = template.frame.copy(ratio = current.frame.ratio),
+        )
+
+    /** Groups for the template strip filter. */
+    enum class Kind(val label: String) { ALL("全部"), IN_PHOTO("照片内"), BORDER("边框"), FROSTED("雾面"), PALETTE("色卡") }
+
+    fun kind(template: WatermarkTemplate): Kind {
+        val frame = template.frame
+        return when {
+            template.layers.any { it.kind == LayerKind.PALETTE } -> Kind.PALETTE
+            frame.background == FrameBackground.FROSTED -> Kind.FROSTED
+            listOf(frame.left, frame.top, frame.right, frame.bottom).all { it == 0f } -> Kind.IN_PHOTO
+            else -> Kind.BORDER
+        }
+    }
 
     fun upgradeLegacyZr(template: WatermarkTemplate): WatermarkTemplate {
         if (template.id != zr.id) return template
