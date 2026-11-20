@@ -65,7 +65,16 @@ enum class BrandMark(val label: String, val asset: String? = null, val tintable:
     GOPRO("GoPro", "gopro", false),
     INSTA360("Insta360", "insta360"),
     HUAWEI("HUAWEI", "huawei", false),
-    XIAOMI("Xiaomi", "xiaomi");
+    XIAOMI("Xiaomi", "xiaomi"),
+    SAMSUNG("Samsung", "samsung"),
+    OPPO("OPPO", "oppo"),
+    VIVO("vivo", "vivo"),
+    HONOR("HONOR", "honor"),
+    GOOGLE("Google", "google"),
+    ONEPLUS("OnePlus", "oneplus"),
+    MOTOROLA("Motorola", "motorola"),
+    NOKIA("Nokia", "nokia"),
+    ASUS("ASUS", "asus");
 
     internal fun graphic(style: BrandStyle): BrandGraphic? {
         val original = BrandGraphic(asset ?: return null, tintable)
@@ -149,6 +158,15 @@ enum class BrandMark(val label: String, val asset: String? = null, val tintable:
                 make.startsWith("INSTA360") || make.startsWith("ARASHI VISION") -> INSTA360
                 make.startsWith("HUAWEI") -> HUAWEI
                 listOf("XIAOMI", "REDMI", "POCO").any(make::startsWith) -> XIAOMI
+                make.startsWith("SAMSUNG") -> SAMSUNG
+                make.startsWith("OPPO") -> OPPO
+                make.startsWith("VIVO") -> VIVO
+                make.startsWith("HONOR") -> HONOR
+                make.startsWith("GOOGLE") -> GOOGLE
+                make.startsWith("ONEPLUS") -> ONEPLUS
+                make.startsWith("MOTOROLA") -> MOTOROLA
+                make.startsWith("NOKIA") || make.startsWith("HMD") && model.startsWith("NOKIA") -> NOKIA
+                make.startsWith("ASUS") -> ASUS
                 make.isNotEmpty() -> null
                 nikonZ.containsMatchIn(camera) -> NIKON_Z
                 sonyAlpha.containsMatchIn(camera) || camera.startsWith("α", true) -> SONY_ALPHA
@@ -170,6 +188,15 @@ enum class BrandMark(val label: String, val asset: String? = null, val tintable:
                 model.startsWith("INSTA360") -> INSTA360
                 model.startsWith("HUAWEI") -> HUAWEI
                 listOf("XIAOMI", "REDMI", "POCO").any(model::startsWith) -> XIAOMI
+                model.startsWith("SAMSUNG") || model.startsWith("SM-") || model.startsWith("GALAXY") -> SAMSUNG
+                model.startsWith("OPPO") -> OPPO
+                model.startsWith("VIVO") -> VIVO
+                model.startsWith("HONOR") -> HONOR
+                model.startsWith("PIXEL") -> GOOGLE
+                model.startsWith("ONEPLUS") -> ONEPLUS
+                model.startsWith("MOTOROLA") || model.startsWith("MOTO ") -> MOTOROLA
+                model.startsWith("NOKIA") -> NOKIA
+                model.startsWith("ASUS") || model.startsWith("ZENFONE") || model.startsWith("ROG PHONE") -> ASUS
                 else -> null
             }
         }

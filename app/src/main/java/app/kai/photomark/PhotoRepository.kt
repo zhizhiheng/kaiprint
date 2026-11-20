@@ -190,7 +190,7 @@ class PhotoRepository(private val context: Context) {
                 standardChoice(source, PixelKind.STANDARD, exif)?.let(::add)
             }
         }
-        return PhotoInfo(metadata, choices)
+        return PhotoInfo(metadata, choices, source.format == PhotoFormat.JPEG && motionPhoto(Uri.parse(source.uri)))
     }
 
     private fun standardChoice(source: PhotoSource, kind: PixelKind, exif: ExifInterface?): PixelChoice? {
@@ -300,6 +300,11 @@ class PhotoRepository(private val context: Context) {
     private fun jpegGainMap(uri: Uri): Boolean = runCatching {
         val prefix = resolver.openInputStream(uri)?.use { it.readNBytesCompat(96 * 1024) } ?: return false
         String(prefix, Charsets.ISO_8859_1).contains("hdr-gain-map")
+    }.getOrDefault(false)
+
+    private fun motionPhoto(uri: Uri): Boolean = runCatching {
+        val prefix = resolver.openInputStream(uri)?.use { it.readNBytesCompat(128 * 1024) } ?: return false
+        MotionPhoto.marked(prefix)
     }.getOrDefault(false)
 
     private fun java.io.InputStream.readNBytesCompat(limit: Int): ByteArray {
@@ -489,6 +494,9 @@ private fun metadata(exif: ExifInterface?, raw: RawInfo?): PhotoMetadata {
         }
         tags[ExifInterface.TAG_DATETIME_ORIGINAL]?.let {
             put(MetadataField.DATE, if (it.length >= 10) it.take(10).replace(':', '-') + it.drop(10) else it)
+        }
+        if (make?.contains("FUJI", ignoreCase = true) == true) {
+            FilmSimulation.read(exif?.getAttributeBytes(ExifInterface.TAG_MAKER_NOTE))?.let { put(MetadataField.FILM, it) }
         }
     }
     val orientation = exif?.getAttributeInt(ExifInterface.TAG_ORIENTATION, 0)?.takeIf { it in 1..8 } ?: raw?.orientation ?: 1

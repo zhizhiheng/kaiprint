@@ -295,6 +295,8 @@ class Workspace(application: Application) : AndroidViewModel(application) {
 
     fun place(style: PlaceStyle) = edit(draft.copy(template = draft.template.copy(place = style)))
 
+    fun dateStyle(style: DateStyle) = edit(draft.copy(template = draft.template.copy(dateStyle = style)))
+
     fun layer(layer: WatermarkLayer, live: Boolean = false) {
         val layers = draft.template.layers.map { if (it.id == layer.id) layer else it }
         edit(draft.copy(template = draft.template.copy(layers = layers)), live)

@@ -81,6 +81,17 @@ object Templates {
         ),
     )
 
+    val floatingPrint = WatermarkTemplate(
+        "floating-print", "悬浮相纸",
+        Frame(.07f, .07f, .07f, .19f, "#F1EFEA", corner = .032f, shadow = .04f),
+        listOf(
+            footerLogo(BrandTone.ORIGINAL, size = .17f, margin = .07f),
+            WatermarkLayer("exif", LayerKind.EXIF, fields = cameraAndExposure, area = LayerArea.BOTTOM,
+                anchor = Anchor.CENTER_RIGHT, size = .03f, margin = .07f, color = "#2B2A27",
+                column = LayerColumn.RIGHT, separator = Separator.BAR, letterSpacing = .03f),
+        ),
+    )
+
     val brandStamp = WatermarkTemplate(
         "brand-stamp", "品牌角标",
         layers = listOf(
@@ -181,17 +192,18 @@ object Templates {
         ),
     )
 
-    val all = listOf(gallery, modelPlate, zr, frostedGallery, frostedJournal, colorAtlas, fieldNotes, archiveCard,
-        brandStamp, signature, dark, editorial, proof)
+    val all = listOf(gallery, modelPlate, floatingPrint, zr, frostedGallery, frostedJournal, colorAtlas, fieldNotes,
+        archiveCard, brandStamp, signature, dark, editorial, proof)
 
     /**
-     * A built-in template picked from the strip keeps the canvas shape, titles, credit and location choice
-     * already made, so its thumbnail and the edit after tapping it look the same.
+     * A built-in template picked from the strip keeps the canvas shape, titles, credit, location choice and
+     * date style already made, so its thumbnail and the edit after tapping it look the same.
      */
     fun adopt(template: WatermarkTemplate, current: WatermarkTemplate): WatermarkTemplate =
         if (template !in all) template else template.copy(
             captions = current.captions,
             place = current.place,
+            dateStyle = current.dateStyle,
             frame = template.frame.copy(ratio = current.frame.ratio),
         )
 

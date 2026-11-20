@@ -64,6 +64,127 @@ class ExportPlanTest {
         assertEquals(1, plan.notes.size)
     }
 
+    @Test fun typedCameraDetailsReachTheFileOnlyWhenAsked() {
+        val typed = mapOf(MetadataField.MAKE to "Leica", MetadataField.MODEL to "M6", MetadataField.ISO to "200")
+        val untouched = plan(overrides = typed)
+        assertEquals("NIKON CORPORATION", untouched.tags[ExifInterface.TAG_MAKE])
+        assertEquals("400", untouched.tags[ExifInterface.TAG_PHOTOGRAPHIC_SENSITIVITY])
+        val written = plan(ExportSettings(writeManual = true), overrides = typed)
+        assertEquals("Leica", written.tags[ExifInterface.TAG_MAKE])
+        assertEquals("M6", written.tags[ExifInterface.TAG_MODEL])
+        assertEquals("200", written.tags[ExifInterface.TAG_PHOTOGRAPHIC_SENSITIVITY])
+        assertEquals("NIKKOR Z 50mm f/1.8 S", written.tags[ExifInterface.TAG_LENS_MODEL])
+        assertTrue(written.notes.isEmpty())
+        // Nothing is written at all when the file is to carry no shooting details.
+        assertTrue(plan(ExportSettings(writeManual = true, keepMetadata = false), overrides = typed).tags.isEmpty())
+    }
+
+    @Test fun typedValuesBecomeTheNumbersExifStores() {
+        val manual = manualExif(mapOf(
+            MetadataField.FOCAL to "85 mm", MetadataField.FOCAL_EQUIVALENT to "127.5mm", MetadataField.APERTURE to "f/1.8",
+            MetadataField.SHUTTER to "1/125 s", MetadataField.ISO to "12,800", MetadataField.EXPOSURE_BIAS to "−0.7 EV",
+            MetadataField.DATE to "2026年11月20日 17:42", MetadataField.FILM to "Classic Chrome",
+            MetadataField.TITLE to "Dusk", MetadataField.LOCATION to "Shanghai",
+        ), PhotoMetadata())
+        assertEquals(mapOf(
+            ExifInterface.TAG_FOCAL_LENGTH to "85000/1000", ExifInterface.TAG_FOCAL_LENGTH_IN_35MM_FILM to "128",
+            ExifInterface.TAG_F_NUMBER to "1.8", ExifInterface.TAG_EXPOSURE_TIME to "0.008",
+            ExifInterface.TAG_PHOTOGRAPHIC_SENSITIVITY to "12800", ExifInterface.TAG_EXPOSURE_BIAS_VALUE to "-70/100",
+            ExifInterface.TAG_DATETIME_ORIGINAL to "2026:11:20 17:42:00",
+        ), manual.tags)
+        assertTrue(manual.stale.isEmpty())
+        assertTrue(manual.notes.isEmpty())
+    }
+
+    @Test fun typedLensReplacesTheRecordedMakerAndFocalRange() {
+        val recorded = metadata.copy(exif = exif + mapOf(
+            ExifInterface.TAG_LENS_MAKE to "NIKON", ExifInterface.TAG_LENS_SPECIFICATION to "50/1 50/1 18/10 18/10"))
+        val settings = ExportSettings(writeManual = true)
+        val plan = plan(settings, overrides = mapOf(MetadataField.LENS to "Voigtlander NOKTON 40mm F1.2"),
+            target = info.copy(metadata = recorded))
+        assertEquals("Voigtlander NOKTON 40mm F1.2", plan.tags[ExifInterface.TAG_LENS_MODEL])
+        assertNull(plan.tags[ExifInterface.TAG_LENS_MAKE])
+        assertNull(plan.tags[ExifInterface.TAG_LENS_SPECIFICATION])
+        // A lens name the file cannot store leaves the recorded lens whole.
+        val chinese = plan(settings, overrides = mapOf(MetadataField.LENS to "老蛙 15mm"), target = info.copy(metadata = recorded))
+        assertEquals("NIKKOR Z 50mm f/1.8 S", chinese.tags[ExifInterface.TAG_LENS_MODEL])
+        assertEquals("NIKON", chinese.tags[ExifInterface.TAG_LENS_MAKE])
+        assertTrue(chinese.notes.single().startsWith("手填的镜头"))
+    }
+
+    @Test fun typedValuesTheFileCannotHoldAreReportedAndLeftOut() {
+        val recorded = PhotoMetadata(mapOf(MetadataField.MODEL to "ZR", MetadataField.ISO to "ISO 400"))
+        val manual = manualExif(mapOf(
+            MetadataField.MAKE to "尼康", MetadataField.APERTURE to "大光圈", MetadataField.ISO to "102400",
+            MetadataField.SHUTTER to "1/0", MetadataField.DATE to "深秋", MetadataField.EXPOSURE_BIAS to "EV",
+            // Left as recorded, or cleared to hide it from the watermark: the file keeps what it has.
+            MetadataField.MODEL to " ZR ", MetadataField.FOCAL to "  ",
+        ), recorded)
+        assertTrue(manual.tags.isEmpty())
+        assertEquals(6, manual.notes.size)
+        assertTrue(manual.notes.all { it.startsWith("手填") })
+        assertTrue(manual.notes.any { "65535" in it })
+        assertTrue(manualExif(mapOf(MetadataField.ISO to "ISO 400"), recorded).tags.isEmpty())
+    }
+
+    @Test fun typedNumbersAndDatesAreReadInTheirUsualSpellings() {
+        assertEquals(50.0, "50 mm".amount()!!, 0.0)
+        assertEquals(1.8, "f/1.8".amount()!!, 0.0)
+        assertEquals(2.8, "F2,8".amount()!!, 0.0)
+        assertEquals(.004, "1/250".amount()!!, 1e-9)
+        assertEquals(2.5, "2.5\"".amount()!!, 0.0)
+        assertEquals(.3, "+0.3 EV".amount(signed = true)!!, 0.0)
+        assertEquals(-1.0, "-1".amount(signed = true)!!, 0.0)
+        assertEquals(-2.0 / 3, "–2/3 EV".amount(signed = true)!!, 1e-9)
+        // A hyphen before a plain quantity is punctuation, not a sign.
+        assertEquals(35.0, "-35mm".amount()!!, 0.0)
+        assertNull("f/".amount())
+        assertNull("1/0".amount())
+        assertEquals("2026:11:20 17:42:10", "2026-11-20 17:42:10".exifTime())
+        assertEquals("2026:11:20 17:42:00", "2026/11/20 17:42".exifTime())
+        assertEquals("2026:01:05 00:00:00", "2026.1.5".exifTime())
+        assertEquals("2026:11:20 09:05:00", "2026年11月20日 9:05".exifTime())
+        assertEquals("2026:11:20 17:42:10", "2026:11:20T17:42:10".exifTime())
+        assertNull("2026-13-01".exifTime())
+        assertNull("2026-11-20 25:00".exifTime())
+        assertNull("Nov 20".exifTime())
+    }
+
+    @Test fun tiffTakesTypedMakeModelAndTimeOnly() {
+        val plan = plan(ExportSettings(format = OutputFormat.TIFF, writeManual = true), overrides = mapOf(
+            MetadataField.MAKE to "Leica", MetadataField.DATE to "2026-11-20 17:42", MetadataField.MODEL to "徕卡 M6",
+            MetadataField.APERTURE to "大光圈"))
+        assertEquals(mapOf(
+            ExifInterface.TAG_MAKE to "Leica", ExifInterface.TAG_MODEL to "NIKON ZR",
+            ExifInterface.TAG_DATETIME_ORIGINAL to "2026:11:20 17:42:00"), plan.tags)
+        // The aperture is not written to a TIFF either way, so it is not worth a note of its own.
+        assertEquals(1, plan.notes.count { it.startsWith("手填") })
+        assertTrue(plan.notes.any { it.startsWith("TIFF") })
+    }
+
+    @Test fun motionPhotoKeepsItsVideoOnlyFromJpegToJpeg() {
+        val live = info.copy(motion = true)
+        val keep = ExportSettings(keepMotion = true)
+        val kept = plan(keep, target = live)
+        assertTrue(kept.motion)
+        assertTrue(kept.notes.single().startsWith("动态部分"))
+        // Off by default, and a still photo has nothing to say about it.
+        assertTrue(!plan(target = live).motion && plan(target = live).notes.isEmpty())
+        assertTrue(!plan(keep).motion && plan(keep).notes.isEmpty())
+        // The video does not depend on the still's shooting details being written.
+        val bare = plan(keep.copy(keepMetadata = false), target = live)
+        assertTrue(bare.motion && bare.tags.isEmpty())
+        assertTrue(bare.notes.single().startsWith("动态部分"))
+        for (format in listOf(OutputFormat.PNG, OutputFormat.WEBP, OutputFormat.TIFF)) {
+            val still = plan(keep.copy(format = format), target = live)
+            assertTrue(format.name, !still.motion)
+            assertTrue(format.name, still.notes.any { it.startsWith("只有从 JPEG 导出 JPEG") })
+        }
+        val developed = live.copy(choices = listOf(live.choices.single().copy(kind = PixelKind.COMPANION)))
+        assertTrue(!plan(keep, target = developed).motion)
+        assertTrue(plan(keep, target = developed).notes.single().startsWith("只有从 JPEG 导出 JPEG"))
+    }
+
     @Test fun ultraHdrIsKeptOnlyFromJpegToJpegOnNewerAndroid() {
         val hdr = info.copy(choices = listOf(info.choices.single().copy(hdr = true)))
         assertEquals(HdrHandling.KEPT, plan(target = hdr).hdr)

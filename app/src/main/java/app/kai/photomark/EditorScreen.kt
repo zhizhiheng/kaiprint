@@ -431,6 +431,9 @@ private fun LayersPanel(
     }
     if (layer.kind == LayerKind.EXIF) {
         MetadataChips(layer.fields) { workspace.layer(layer.copy(fields = it)) }
+        ChoiceMenu("参数分隔", layer.separator, Separator.entries, Separator::label) {
+            workspace.layer(layer.copy(separator = it))
+        }
     }
     if (layer.kind == LayerKind.BRAND) {
         BrandControls(workspace, layer, metadata, overrides)
@@ -459,12 +462,26 @@ private fun LayersPanel(
     SliderRow("边距", layer.margin, 0f.. .3f, { "${(it * 100).roundToInt()}%" }, workspace::finishAdjustment) { workspace.layer(layer.copy(margin = it), live = true) }
     SliderRow("透明度", layer.opacity, 0f..1f, { "${(it * 100).roundToInt()}%" }, workspace::finishAdjustment) { workspace.layer(layer.copy(opacity = it), live = true) }
     SliderRow("旋转", layer.rotation, -180f..180f, { "${it.roundToInt()}°" }, workspace::finishAdjustment) { workspace.layer(layer.copy(rotation = it), live = true) }
-    if (workspace.draft.template.frame.background == FrameBackground.FROSTED && layer.canUseGlassInk &&
+    if (layer.kind == LayerKind.TEXT || layer.kind == LayerKind.EXIF) {
+        SliderRow("字距", layer.letterSpacing, 0f..MAX_LETTER_SPACING, { "${(it * 100).roundToInt()}%" }, workspace::finishAdjustment) { workspace.layer(layer.copy(letterSpacing = it), live = true) }
+    }
+    val inPhoto = layer.area == LayerArea.PHOTO
+    if (layer.canAdaptInk && (inPhoto || workspace.draft.template.frame.background == FrameBackground.FROSTED) &&
         (layer.kind != LayerKind.BRAND || layer.brand.resolve(metadata, overrides)?.graphic(layer.brandStyle)?.tintable == true)) {
-        Toggle("随雾面明暗换色", layer.autoGlassInk) { workspace.layer(layer.copy(autoGlassInk = it)) }
+        if (inPhoto) {
+            Toggle("随照片明暗换色", layer.autoPhotoInk) { workspace.layer(layer.copy(autoPhotoInk = it)) }
+            if (layer.autoPhotoInk) {
+                Text("每张照片按水印所在位置的明暗，各自换成浅色或深色。", color = Muted,
+                    style = MaterialTheme.typography.bodySmall)
+            }
+        } else {
+            Toggle("随雾面明暗换色", layer.autoGlassInk) { workspace.layer(layer.copy(autoGlassInk = it)) }
+        }
     }
     if (layer.kind in listOf(LayerKind.TEXT, LayerKind.EXIF, LayerKind.LINE)) {
-        Palette("水印颜色", layer.color) { workspace.layer(layer.copy(color = it, autoGlassInk = false)) }
+        Palette("水印颜色", layer.color) {
+            workspace.layer(layer.copy(color = it, autoGlassInk = false, autoPhotoInk = false))
+        }
     }
     if (layer.kind == LayerKind.TEXT || layer.kind == LayerKind.EXIF) {
         ChoiceMenu("字体", layer.type, TypeStyle.entries, { it.label }) {
@@ -508,6 +525,12 @@ private fun FramePanel(workspace: Workspace, bitmap: Bitmap?) {
             workspace.frame(frame.copy(tintStrength = it), live = true)
         }
     }
+    SliderRow("照片圆角", frame.corner, 0f..Frame.MAX_CORNER, pct, workspace::finishAdjustment) { workspace.frame(frame.copy(corner = it), live = true) }
+    SliderRow("照片投影", frame.shadow, 0f..Frame.MAX_SHADOW, pct, workspace::finishAdjustment) { workspace.frame(frame.copy(shadow = it), live = true) }
+    if (frame.shadow > 0f && listOf(frame.left, frame.top, frame.right, frame.bottom).all { it == 0f } &&
+        frame.ratio == FrameRatio.ORIGINAL) {
+        Text("投影落在边框上，四边没有留白时看不到。", color = Muted, style = MaterialTheme.typography.bodySmall)
+    }
     SliderRow("上边", frame.top, 0f.. .75f, pct, workspace::finishAdjustment) { workspace.frame(frame.copy(top = it), live = true) }
     SliderRow("下边", frame.bottom, 0f.. .75f, pct, workspace::finishAdjustment) { workspace.frame(frame.copy(bottom = it), live = true) }
     SliderRow("左边", frame.left, 0f.. .75f, pct, workspace::finishAdjustment) { workspace.frame(frame.copy(left = it), live = true) }
@@ -547,6 +570,12 @@ private fun MetadataPanel(
             }) { selectedId = it.id }
         }
         MetadataChips(active.fields) { workspace.layer(active.copy(fields = it)) }
+        ChoiceMenu("参数分隔", active.separator, Separator.entries, Separator::label) {
+            workspace.layer(active.copy(separator = it))
+        }
+    }
+    ChoiceMenu("日期样式", workspace.draft.template.dateStyle, DateStyle.entries, DateStyle::label) {
+        workspace.dateStyle(it)
     }
     if (workspace.editing.size > 1) {
         Text("同一套选项应用到整组，每张照片读取自己的相机参数。", color = Muted,
@@ -711,6 +740,26 @@ private fun MetadataChips(fields: List<MetadataField>, onChange: (List<MetadataF
             )
         }
     }
+    if (fields.size < 2) return
+    var picked by remember { mutableStateOf<MetadataField?>(null) }
+    val moving = picked?.takeIf { it in fields }
+    Text("排列顺序 · 点选一项再前移或后移", color = Muted, style = MaterialTheme.typography.bodySmall)
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        fields.forEachIndexed { index, field ->
+            FilterChip(
+                selected = field == moving,
+                onClick = { picked = if (field == moving) null else field },
+                label = { Text("${index + 1} ${field.label}") },
+                modifier = Modifier.testTag("order-${field.name}"),
+            )
+        }
+    }
+    if (moving != null) {
+        Row {
+            TextButton({ onChange(fields.moved(moving, -1)) }, enabled = fields.first() != moving) { Text("前移") }
+            TextButton({ onChange(fields.moved(moving, 1)) }, enabled = fields.last() != moving) { Text("后移") }
+        }
+    }
 }
 
 @Composable
@@ -758,7 +807,7 @@ private fun BrandControls(
     }
     if (graphic.tintable) {
         ChoiceMenu("标志颜色", layer.brandTone, BrandTone.entries, BrandTone::label) {
-            workspace.layer(layer.copy(brandTone = it, autoGlassInk = false))
+            workspace.layer(layer.copy(brandTone = it, autoGlassInk = false, autoPhotoInk = false))
         }
     }
 }
@@ -921,6 +970,18 @@ private fun ExportOptions(workspace: Workspace, info: PhotoInfo?, overrides: Map
                         settings = settings.copy(keepLocation = it)
                         if (it) requestLocation()
                     }
+                }
+                Toggle("把手填的器材和参数写入文件", settings.writeManual) { settings = settings.copy(writeManual = it) }
+                if (settings.writeManual) {
+                    Text("在「标注 → 改写水印参数」里填的品牌、机型、镜头、焦距、光圈、快门、ISO、曝光补偿和拍摄时间，会替换成片 EXIF 里的原值。",
+                        color = Muted, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+            if (settings.format == OutputFormat.JPEG && (info?.motion == true || all)) {
+                Toggle("保留动态照片的视频", settings.keepMotion) { settings = settings.copy(keepMotion = it) }
+                if (settings.keepMotion) {
+                    Text("视频原样附在成片后面，不带边框和水印。部分厂商相册只认自家格式，可能当作静态照片显示。",
+                        color = Muted, style = MaterialTheme.typography.bodySmall)
                 }
             }
             if (current?.pixels?.kind == PixelKind.EMBEDDED || all ||

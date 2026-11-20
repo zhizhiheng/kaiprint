@@ -29,6 +29,7 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.IOException
 import java.util.Locale
@@ -47,8 +48,10 @@ class Exporter(private val app: PhotoMarkApp) {
     ) {
         val input = storageJson.decodeFromString<ExportInput>(item.input)
         val filename = resultName(item, input, settings.format)
+        // A photo that keeps its video is saved under the name motion photos are recognized by.
+        val motionName = filename.substringBeforeLast('.') + ".MP." + settings.format.extension
         val existing = item.pendingUri?.let { uri -> pendingStatus(Uri.parse(uri))?.let { Uri.parse(uri) to it } }
-            ?: findExisting(filename)
+            ?: findExisting(filename) ?: if (settings.keepMotion) findExisting(motionName) else null
         if (existing != null && !existing.second) {
             dao.updateItem(item.copy(state = ItemState.DONE.name, outputUri = existing.first.toString(), pendingUri = null))
             return
@@ -72,10 +75,12 @@ class Exporter(private val app: PhotoMarkApp) {
                 bitmap.recycle()
             }
             if (settings.keepMetadata && settings.format != OutputFormat.TIFF) writeExif(scratch, plan)
+            val moving = plan.motion && attachVideo(scratch, plan, settings)
+            val remark = if (plan.motion && !moving) "动态部分没能带上，这张导出为静态照片" else null
             jobContext.ensureActive()
 
             val record = reservation ?: resolver.insert(collection, ContentValues().apply {
-                put(MediaStore.Images.Media.DISPLAY_NAME, filename)
+                put(MediaStore.Images.Media.DISPLAY_NAME, if (moving) motionName else filename)
                 put(MediaStore.Images.Media.MIME_TYPE, settings.format.mime)
                 put(MediaStore.Images.Media.RELATIVE_PATH, EXPORT_PATH)
                 put(MediaStore.Images.Media.IS_PENDING, 1)
@@ -100,7 +105,8 @@ class Exporter(private val app: PhotoMarkApp) {
                 }, null, null)
                 if (rows != 1) throw ExportFailure("ALBUM", "相册未能发布成片")
                 published = true
-                dao.updateItem(item.copy(state = ItemState.DONE.name, pendingUri = null, outputUri = record.toString()))
+                dao.updateItem(item.copy(state = ItemState.DONE.name, pendingUri = null, outputUri = record.toString(),
+                    errorMessage = remark))
             }
         } finally {
             scratch.delete()
@@ -175,6 +181,36 @@ class Exporter(private val app: PhotoMarkApp) {
         exif.setAttribute(ExifInterface.TAG_PIXEL_Y_DIMENSION, size.height.toString())
         if (plan.latitude != null && plan.longitude != null) exif.setLatLong(plan.latitude, plan.longitude)
         exif.saveAttributes()
+    }
+
+    /**
+     * Puts the source's video behind the finished still. The still is left as it was when the source turns out to
+     * hold no readable video or the two don't fit in memory together.
+     */
+    private fun attachVideo(scratch: File, plan: ExportPlan, settings: ExportSettings): Boolean = try {
+        val limit = MotionPhoto.MAX_SOURCE
+        val source = resolver.openInputStream(Uri.parse(plan.pixels.source.uri))?.use { stream ->
+            val bytes = ByteArrayOutputStream()
+            val buffer = ByteArray(64 * 1024)
+            while (bytes.size() <= limit) {
+                val count = stream.read(buffer)
+                if (count < 0) break
+                bytes.write(buffer, 0, count)
+            }
+            bytes.takeIf { it.size() <= limit }?.toByteArray()
+        }
+        val video = source?.let(MotionPhoto::video)
+        val joined = if (source != null && video != null && scratch.length() <= limit) {
+            // The video keeps a place only where the still does.
+            if (!settings.keepMetadata || !settings.keepLocation) MotionPhoto.dropLocation(source, video)
+            MotionPhoto.attach(scratch.readBytes(), source, video)
+        } else null
+        if (joined != null) scratch.writeBytes(joined)
+        joined != null
+    } catch (_: IOException) {
+        false
+    } catch (_: OutOfMemoryError) {
+        false
     }
 
     private fun resultName(item: ExportItemRow, input: ExportInput, format: OutputFormat): String {

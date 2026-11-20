@@ -4,6 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 
 class BrandMarkTest {
     @Test fun recognizesCameraMakersAndSystemMarks() {
@@ -25,6 +26,48 @@ class BrandMarkTest {
         )
         for ((make, model, expected) in examples) {
             assertEquals("$make $model", expected, BrandMark.detect(make, model))
+        }
+    }
+
+    @Test fun recognizesPhoneMakersByMakeOrByModelAlone() {
+        val examples = listOf(
+            Triple("samsung", "SM-S9280", BrandMark.SAMSUNG),
+            Triple("OPPO", "PJV110", BrandMark.OPPO),
+            Triple("vivo", "V2309A", BrandMark.VIVO),
+            Triple("HONOR", "PGT-AN10", BrandMark.HONOR),
+            Triple("Google", "Pixel 8 Pro", BrandMark.GOOGLE),
+            Triple("OnePlus", "PJD110", BrandMark.ONEPLUS),
+            Triple("motorola", "motorola edge 50 pro", BrandMark.MOTOROLA),
+            Triple("HMD Global", "Nokia X30 5G", BrandMark.NOKIA),
+            Triple("Nokia", "Lumia 1020", BrandMark.NOKIA),
+            Triple("asus", "ASUSAI2401_A", BrandMark.ASUS),
+            Triple(null, "Pixel 8 Pro", BrandMark.GOOGLE),
+            Triple(null, "SM-S9280", BrandMark.SAMSUNG),
+            Triple(null, "Galaxy S24 Ultra", BrandMark.SAMSUNG),
+            Triple(null, "vivo X100 Pro", BrandMark.VIVO),
+            Triple(null, "moto g84 5G", BrandMark.MOTOROLA),
+            Triple(null, "ROG Phone 8", BrandMark.ASUS),
+        )
+        for ((make, model, expected) in examples) {
+            assertEquals("$make $model", expected, BrandMark.detect(make, model))
+        }
+        // A maker without a mark keeps its own name rather than borrowing a similar one.
+        assertNull(BrandMark.detect("HMD Global", "HMD Skyline"))
+        assertNull(BrandMark.detect("realme", "RMX3888"))
+        // The mark's name is what the watermark prints for the maker.
+        assertEquals("Google", Cameras.make("Google", "Pixel 8 Pro"))
+        assertEquals("Samsung", Cameras.make("samsung", "SM-S9280"))
+        assertEquals("vivo", Cameras.make("vivo", "V2309A"))
+    }
+
+    @Test fun everyMarkAndStyleHasItsVectorInTheApp() {
+        val app = File(".").canonicalFile.let { if (it.name == "app") it else File(it, "app") }
+        for (mark in BrandMark.entries) for (style in BrandStyle.entries) {
+            val graphic = mark.graphic(style) ?: continue
+            val file = File(app, "src/main/assets/${graphic.file}")
+            assertTrue("${mark.name} ${style.name} ${graphic.file}", file.isFile && file.length() > 0)
+            // The renderer sizes a mark by its view box, so a file without one cannot be laid out.
+            assertTrue("${graphic.file} viewBox", "viewBox=" in file.readText())
         }
     }
 

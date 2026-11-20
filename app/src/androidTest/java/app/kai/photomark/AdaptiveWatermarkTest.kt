@@ -12,6 +12,7 @@ import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 @RunWith(AndroidJUnit4::class)
@@ -52,6 +53,76 @@ class AdaptiveWatermarkTest {
             assertTrue(hasInk(output.width * 3 / 4) { it > 220 })
         } finally {
             output.recycle()
+            source.recycle()
+        }
+    }
+
+    @Test fun photoCaptionsChooseInkBySideOfThePhotoOnlyWhenAsked() {
+        val source = Bitmap.createBitmap(400, 240, Bitmap.Config.ARGB_8888)
+        source.eraseColor(Color.WHITE)
+        Canvas(source).drawRect(200f, 0f, 400f, 240f, Paint().apply { color = Color.BLACK })
+        fun render(adapt: Boolean): Bitmap {
+            val template = Templates.brandStamp.copy(layers = listOf(LayerColumn.LEFT_HALF, LayerColumn.RIGHT_HALF).map {
+                WatermarkLayer(it.name, LayerKind.TEXT, "TEST", anchor = Anchor.CENTER, column = it, size = .09f,
+                    color = "#D81E1E", autoPhotoInk = adapt)
+            })
+            val layout = WatermarkLayout.calculate(PixelSize(400, 240), template.frame)
+            return app.renderer.preview(source, layout, template, PhotoMetadata(), emptyMap())
+        }
+        fun Bitmap.shows(left: Boolean, check: (Int) -> Boolean): Boolean {
+            val columns = if (left) 8 until width / 2 - 8 else width / 2 + 8 until width - 8
+            return columns.any { x -> (0 until height).any { y -> check(getPixel(x, y)) } }
+        }
+        val red = { pixel: Int -> Color.red(pixel) > 180 && Color.green(pixel) < 80 }
+        val chosen = render(false)
+        val adapted = render(true)
+        try {
+            // Left to itself the caption keeps the colour it was given on both halves.
+            assertTrue(chosen.shows(left = true, red))
+            assertTrue(chosen.shows(left = false, red))
+            assertFalse(adapted.shows(left = true, red))
+            assertFalse(adapted.shows(left = false, red))
+            assertTrue("白底上应换成深色", adapted.shows(left = true) { Color.red(it) < 45 })
+            assertTrue("黑底上应换成浅色", adapted.shows(left = false) { Color.red(it) > 220 })
+        } finally {
+            chosen.recycle()
+            adapted.recycle()
+            source.recycle()
+        }
+    }
+
+    @Test fun roundedPrintShowsTheFrameAtItsCornersAndCastsAShadowBelow() {
+        val source = Bitmap.createBitmap(600, 400, Bitmap.Config.ARGB_8888)
+        source.eraseColor(Color.rgb(200, 30, 30))
+        val print = Templates.floatingPrint.copy(layers = emptyList())
+        val flat = print.copy(frame = print.frame.copy(corner = 0f, shadow = 0f))
+        val layout = WatermarkLayout.calculate(PixelSize(600, 400), print.frame)
+        val photo = layout.photo
+        val paper = Color.green(Color.parseColor(print.frame.color))
+        val lifted = app.renderer.preview(source, layout, print, PhotoMetadata(), emptyMap())
+        val plain = app.renderer.preview(source, layout, flat, PhotoMetadata(), emptyMap())
+        try {
+            fun Bitmap.at(x: Float, y: Float) = getPixel(
+                (x * width / layout.canvas.width).toInt().coerceIn(0, width - 1),
+                (y * height / layout.canvas.height).toInt().coerceIn(0, height - 1))
+            // The frame is close to grey and so is a shadow on it; the photo is plain red.
+            fun neutral(pixel: Int) = abs(Color.red(pixel) - Color.green(pixel)) < 16
+            val middle = (photo.left + photo.right) / 2
+            assertFalse(neutral(lifted.at(middle, (photo.top + photo.bottom) / 2)))
+            assertTrue("圆角之外应露出边框", neutral(lifted.at(photo.left + 1.5f, photo.top + 1.5f)))
+            assertTrue(neutral(lifted.at(photo.right - 1.5f, photo.bottom - 1.5f)))
+            assertFalse(neutral(plain.at(photo.left + 1.5f, photo.top + 1.5f)))
+
+            val below = Color.green(lifted.at(middle, photo.bottom + 4))
+            val above = Color.green(lifted.at(middle, photo.top - 4))
+            assertTrue("照片下方应有投影", below < paper - 20)
+            assertTrue("投影应下重上轻", below < above)
+            // Far from the photo the frame keeps its own colour, and without a shadow so does its edge.
+            assertEquals(paper.toFloat(), Color.green(lifted.at(2f, 2f)).toFloat(), 3f)
+            assertEquals(paper.toFloat(), Color.green(plain.at(middle, photo.bottom + 4)).toFloat(), 3f)
+        } finally {
+            lifted.recycle()
+            plain.recycle()
             source.recycle()
         }
     }

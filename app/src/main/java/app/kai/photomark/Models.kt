@@ -62,10 +62,63 @@ data class PhotoGroup(val primary: PhotoSource, val developed: PhotoSource? = nu
 enum class MetadataField(val label: String) {
     MAKE("品牌"), MODEL("机型"), LENS("镜头"), FOCAL("焦距"), APERTURE("光圈"),
     SHUTTER("快门"), ISO("ISO"), DATE("拍摄时间"), EXPOSURE_BIAS("曝光补偿"),
-    FOCAL_EQUIVALENT("等效焦距"), TITLE("作品标题"), AUTHOR("署名"), LOCATION("地点");
+    FOCAL_EQUIVALENT("等效焦距"), FILM("胶片模拟"), TITLE("作品标题"), AUTHOR("署名"), LOCATION("地点");
 
     companion object {
         val captionFields = listOf(TITLE, AUTHOR, LOCATION)
+    }
+}
+
+/** Moves [item] by [offset] places. A move past either end leaves the list as it is. */
+fun <T> List<T>.moved(item: T, offset: Int): List<T> {
+    val from = indexOf(item)
+    if (from < 0 || from + offset !in indices) return this
+    return toMutableList().apply { add(from + offset, removeAt(from)) }
+}
+
+/** What stands between two parameters printed on one line. */
+@Serializable
+enum class Separator(val label: String, val text: String) {
+    DOT("圆点 ·", "   ·   "), BAR("竖线 |", "   |   "), SLASH("斜线 /", "   /   "),
+    DASH("短横 -", "   -   "), SPACE("空格", "    "),
+}
+
+/** How the capture time is printed. Text that is not a date, such as a season typed by hand, is left alone. */
+@Serializable
+enum class DateStyle(val label: String) {
+    ORIGINAL("原样 · 2026-11-20 17:42:10"),
+    MINUTE("到分钟 · 2026-11-20 17:42"),
+    DATE("仅日期 · 2026-11-20"),
+    DOTTED("2026.11.20"),
+    SLASHED("2026/11/20"),
+    CHINESE("2026年11月20日"),
+    ENGLISH("Nov 20, 2026"),
+    STAMP("胶片日期戳 · '26 11 20");
+
+    fun format(value: String): String {
+        if (this == ORIGINAL) return value
+        val match = pattern.matchEntire(value.trim()) ?: return value
+        val (y, m, d, hour, minute) = match.destructured
+        val month = m.toInt()
+        val day = d.toInt()
+        if (month !in 1..12 || day !in 1..31) return value
+        val mm = m.padStart(2, '0')
+        val dd = d.padStart(2, '0')
+        return when (this) {
+            ORIGINAL -> value
+            MINUTE -> if (hour.isEmpty()) "$y-$mm-$dd" else "$y-$mm-$dd ${hour.padStart(2, '0')}:$minute"
+            DATE -> "$y-$mm-$dd"
+            DOTTED -> "$y.$mm.$dd"
+            SLASHED -> "$y/$mm/$dd"
+            CHINESE -> "${y}年${month}月${day}日"
+            ENGLISH -> "${months[month - 1]} $day, $y"
+            STAMP -> "'${y.takeLast(2)} $mm $dd"
+        }
+    }
+
+    private companion object {
+        val pattern = Regex("""(\d{4})[-:/.](\d{1,2})[-:/.](\d{1,2})(?:[ T](\d{1,2}):(\d{2})(?::\d{2})?)?""")
+        val months = listOf("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
     }
 }
 
@@ -89,7 +142,7 @@ data class PhotoMetadata(
         parts(fields, overrides).joinToString(SEPARATOR)
 
     companion object {
-        const val SEPARATOR = "   ·   "
+        val SEPARATOR = Separator.DOT.text
     }
 }
 
@@ -106,7 +159,12 @@ data class PixelChoice(
     val hdr: Boolean = false,
 )
 
-data class PhotoInfo(val metadata: PhotoMetadata, val choices: List<PixelChoice>)
+data class PhotoInfo(
+    val metadata: PhotoMetadata,
+    val choices: List<PixelChoice>,
+    /** The source is a JPEG that carries a short video after the still, as phone cameras save a live shot. */
+    val motion: Boolean = false,
+)
 
 /** Saved by name, so existing entries keep their names when new ratios are added. */
 @Serializable
@@ -165,7 +223,20 @@ data class Frame(
     val tintStrength: Float = .10f,
     /** Shrinks a parameter strip to the side margin when a photo has nothing to print in it. */
     val collapseEmpty: Boolean = true,
-)
+    /** Corner radius of the photo, as a share of its short edge. */
+    val corner: Float = 0f,
+    /** How far a soft shadow spreads from the photo onto the frame, as a share of its short edge. */
+    val shadow: Float = 0f,
+) {
+    /** The corner radius in pixels for a photo of this size, never more than a full pill. */
+    fun cornerRadius(photo: PixelRect, reference: Float) =
+        (corner.coerceIn(0f, MAX_CORNER) * reference).coerceAtMost(minOf(photo.width, photo.height) / 2f)
+
+    companion object {
+        const val MAX_CORNER = .12f
+        const val MAX_SHADOW = .08f
+    }
+}
 
 @Serializable
 enum class LayerKind(val label: String) {
@@ -232,9 +303,19 @@ data class WatermarkLayer(
     val paletteCount: Int = 5,
     val autoGlassInk: Boolean = false,
     val reserveBrandSpace: Boolean = false,
+    val separator: Separator = Separator.DOT,
+    /** Extra space between letters, in ems. */
+    val letterSpacing: Float = 0f,
+    /** Picks light or dark ink by what each photo shows under a layer placed on it. */
+    val autoPhotoInk: Boolean = false,
 ) {
-    val canUseGlassInk get() = !tile && background == null && area != LayerArea.PHOTO && area != LayerArea.CANVAS &&
+    val canAdaptInk get() = !tile && background == null && area != LayerArea.CANVAS &&
         kind in listOf(LayerKind.TEXT, LayerKind.EXIF, LayerKind.BRAND)
+
+    /** Whether the ink follows what lies under the layer: the photo itself, or a frosted frame. */
+    fun adaptsInk(frame: Frame) = canAdaptInk &&
+        if (area == LayerArea.PHOTO) autoPhotoInk else autoGlassInk && frame.background == FrameBackground.FROSTED
+
     val label get() = when (kind) {
         LayerKind.TEXT -> text.takeIf(String::isNotBlank) ?: kind.label
         LayerKind.EXIF -> fields.singleOrNull()?.label ?: kind.label
@@ -251,12 +332,21 @@ data class WatermarkTemplate(
     val version: Int = 1,
     val captions: Map<MetadataField, String> = emptyMap(),
     val place: PlaceStyle = PlaceStyle.MANUAL,
+    val dateStyle: DateStyle = DateStyle.ORIGINAL,
 ) {
-    /** Photo details with this template's titles, credit and location, before per-photo overrides. */
+    /** Photo details with this template's titles, credit, location and date style, before per-photo overrides. */
     fun shown(metadata: PhotoMetadata, place: String? = null): PhotoMetadata {
         val extra = captions.filterKeys { it in MetadataField.captionFields }
             .let { if (place != null) it + (MetadataField.LOCATION to place) else it }
-        return if (extra.isEmpty()) metadata else metadata.copy(values = metadata.values + extra)
+        val values = shown(metadata.values + extra)
+        return if (values == metadata.values) metadata else metadata.copy(values = values)
+    }
+
+    /** Hand-typed values as they print: a typed date follows the date style like a recorded one. */
+    fun shown(values: Map<MetadataField, String>): Map<MetadataField, String> {
+        val date = values[MetadataField.DATE] ?: return values
+        val styled = dateStyle.format(date)
+        return if (styled == date) values else values + (MetadataField.DATE to styled)
     }
 }
 
@@ -321,6 +411,10 @@ data class ExportSettings(
     val keepLocation: Boolean = false,
     /** Keeps the gain map of an Ultra HDR JPEG when the output is JPEG too. */
     val keepHdr: Boolean = true,
+    /** Writes hand-typed camera details over the recorded ones in the file's EXIF. */
+    val writeManual: Boolean = false,
+    /** Carries the video of a motion photo over to a JPEG output. The video itself is not reframed. */
+    val keepMotion: Boolean = false,
 ) {
     val size get() = SizeLimit(longEdge, shortEdge)
 

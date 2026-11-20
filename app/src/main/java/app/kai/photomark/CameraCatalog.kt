@@ -129,6 +129,11 @@ val BrandMark.family get() = when (this) {
 
 /** Lens names as EXIF records them, tidied for a watermark. */
 object Lenses {
+    /** Phones name their cameras, not their lenses, so an empty lens name stays empty. */
+    private val phones = setOf(
+        BrandMark.APPLE, BrandMark.HUAWEI, BrandMark.XIAOMI, BrandMark.SAMSUNG, BrandMark.OPPO, BrandMark.VIVO,
+        BrandMark.HONOR, BrandMark.GOOGLE, BrandMark.ONEPLUS, BrandMark.MOTOROLA, BrandMark.NOKIA, BrandMark.ASUS,
+    )
     private val thirdParty = listOf(
         "SIGMA", "TAMRON", "Viltrox", "SAMYANG", "TTArtisan", "7Artisans", "LAOWA", "ZEISS", "Voigtländer",
         "Tokina", "Meike", "SIRUI", "YONGNUO", "Rokinon", "Venus Optics", "Mitakon", "Thypoch", "AstrHori",
@@ -168,7 +173,7 @@ object Lenses {
             name = ""
         }
         if (name.isEmpty()) {
-            if (brand in setOf(BrandMark.APPLE, BrandMark.HUAWEI, BrandMark.XIAOMI)) return null
+            if (brand in phones) return null
             name = fromSpecification(specification, brand) ?: return null
         }
         name = name.replace(sigmaLine) { " | ${it.groupValues[1]}" }.replace(modelCode, "")

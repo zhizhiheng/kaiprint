@@ -1,6 +1,6 @@
 # 品牌标志
 
-品牌图层使用本地 SVG，在预览和导出时绘制矢量路径。自动模式以 EXIF 的品牌和机型为依据。没有品牌字段时，使用可明确识别的机型前缀。批量时每张照片单独判断。找不到匹配项时，品牌图层留空。可手动选标、隐藏或导入自己的 PNG／SVG Logo。
+品牌图层使用本地 SVG，在预览和导出时绘制矢量路径。自动模式以 EXIF 的品牌和机型为依据。没有品牌字段时，使用可明确识别的机型前缀。批量时每张照片单独判断。找不到匹配项时，品牌图层留空。手机照片可识别 Apple、华为、小米（含 Redmi、POCO）、三星、OPPO、vivo、荣耀、Google Pixel、一加、摩托罗拉、诺基亚和华硕。可手动选标、隐藏或导入自己的 PNG／SVG Logo。
 
 「标注」和「图层」都可预览并选择标志样式。选择「方形」时，尼康、OM SYSTEM 和小米使用已有方形标志。其他品牌把原标志等比放到光印绘制的方形底牌上。横版字标和独立图标按品牌提供，缺少对应样式的照片使用原版。样式跟随模板批量应用，也可存入预设。
 
@@ -27,6 +27,7 @@
 | OLYMPUS | 从 Commons 收录的蓝金标志的 1800 像素渲染图还原蓝、金轮廓。[Commons 素材说明](https://commons.wikimedia.org/wiki/File:Olympus_Corporation_logo.svg) |
 | OLYMPUS 横版字标 | 从内置蓝金标志提取蓝色字形。[Commons 素材说明](https://commons.wikimedia.org/wiki/File:Olympus_Corporation_logo.svg) |
 | Xiaomi | 使用 Simple Icons 的矢量图标。[Simple Icons](https://github.com/simple-icons/simple-icons/blob/develop/icons/xiaomi.svg) |
+| Samsung、OPPO、vivo、HONOR、Google、OnePlus、Motorola、Nokia、ASUS | 矢量路径来自 npm 包 `simple-icons` 16.38.0（CC0），只保留图形路径并收紧视框。Google 为单色 G 图标，Motorola 为圆形 M 徽标，OnePlus 为方形 1+ 图标，其余为字标。这九个标志都是单色，可在「标志颜色」换色。[Simple Icons](https://www.npmjs.com/package/simple-icons/v/16.38.0) |
 
 标志用于表示拍摄设备品牌，相关权利归各自持有人。KaiPrint 的 MIT 许可证适用于项目自有代码。第三方组件遵循各自的许可。[第三方组件](dependencies.md)
 
