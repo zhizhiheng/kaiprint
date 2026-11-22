@@ -28,7 +28,7 @@
 
 编辑一张原图可显式传 `inPlace:true, apply:true`。成功结果包含原文件路径和备份路径。已有同名备份时会报告冲突，避免覆盖上次的备份。成片批量导出若中途失败，可从结果的 `outputs` 找到已完成的文件。
 
-官方 MCP 目录使用服务名 `io.github.zhizhiheng/kaiprint`。目录启动方式为 `npx @kkellyoffical/kaiprint@0.0.2 mcp --root <照片目录>`。[发行清单](https://github.com/zhizhiheng/kaiprint/blob/main/server.json) · [MCP Registry](https://registry.modelcontextprotocol.io/v0.1/servers/io.github.zhizhiheng%2Fkaiprint/versions/0.0.2)
+官方 MCP 目录使用服务名 `io.github.zhizhiheng/kaiprint`。目录启动方式为 `npx @kkellyoffical/kaiprint@0.0.2 mcp --root <照片目录>`。[发行清单](https://github.com/zhizhiheng/kaiprint/blob/v0.0.2/server.json) · [MCP Registry](https://registry.modelcontextprotocol.io/v0.1/servers/io.github.zhizhiheng%2Fkaiprint/versions/0.0.2)
 
 ## 安装 skill
 
@@ -38,7 +38,7 @@
 npx --yes --package=@kkellyoffical/kaiprint@0.0.2 -- kaiprint skill --install .agents/skills
 ```
 
-`kaiprint skill --json` 可查看发行包内的技能目录及版本。安装命令允许重复执行，已有本地改动的 SKILL.md 会提示冲突。客户端重新加载后，可以输入「用 KaiPrint 读取这张 NEF 的镜头和快门」或「将这张照片副本的作者改为林凯，再加机型水印」。[skill 源文件](https://github.com/zhizhiheng/kaiprint/blob/main/skills/kaiprint/SKILL.md)
+`kaiprint skill --json` 可查看发行包内的技能目录及版本。安装命令允许重复执行，已有本地改动的 SKILL.md 会提示冲突。客户端重新加载后，可以输入「用 KaiPrint 读取这张 NEF 的镜头和快门」或「将这张照片副本的作者改为林凯，再加机型水印」。[skill 源文件](https://github.com/zhizhiheng/kaiprint/blob/v0.0.2/skills/kaiprint/SKILL.md)
 
 ## 发布时核对
 

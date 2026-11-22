@@ -1,4 +1,5 @@
 import test from "node:test";
+import pkg from "../../package.json" with { type: "json" };
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -68,7 +69,7 @@ async function fixture(t) {
 }
 
 test("machine-readable discovery, validation and missing files", async () => {
-  assert.equal((await run(["--version"])).version, "0.0.2");
+  assert.equal((await run(["--version"])).version, pkg.version);
   assert.ok((await run(["templates"])).templates.gallery);
   assert.equal((await run(["render", "x", "--bad"])).code, 2);
   assert.equal(

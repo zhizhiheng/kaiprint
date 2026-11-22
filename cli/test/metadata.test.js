@@ -1,4 +1,5 @@
 import test from "node:test";
+import pkg from "../../package.json" with { type: "json" };
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -124,7 +125,7 @@ test("skill installs from the bundle, is idempotent and preserves user edits", a
   const result = await cli("skill", "--install", place);
   const file = path.join(result.directory, "SKILL.md");
   assert.match(await readFile(file, "utf8"), /name: kaiprint/);
-  assert.equal(result.version, "0.0.2");
+  assert.equal(result.version, pkg.version);
   await cli("skill", "--install", place);
   await writeFile(file, "custom");
   await assert.rejects(cli("skill", "--install", place));
