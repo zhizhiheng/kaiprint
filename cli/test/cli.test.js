@@ -143,18 +143,19 @@ test("actual gallery, overlay and glass files match plans, strip GPS and preserv
     const [p] = (await run([...args, "--dry-run"])).photos;
     const r = await run([...args, "--yes"]);
     assert.equal(r.code, 0, JSON.stringify(r));
-    const info = await sharp(output).metadata();
+    const bytes = await readFile(output);
+    const info = await sharp(bytes).metadata();
     assert.deepEqual(
       [info.width, info.height, info.format],
       [p.canvas.width, p.canvas.height, format],
     );
-    const rgb = await sharp(output).removeAlpha().raw().toBuffer();
+    const rgb = await sharp(bytes).removeAlpha().raw().toBuffer();
     const center =
       3 *
       (Math.floor(info.height / 2) * info.width + Math.floor(info.width / 2));
     assert.ok(rgb[center + 1] > rgb[center] + 20);
     assert.ok(
-      (await sharp(output).stats()).channels.some((c) => c.stdev > 10),
+      (await sharp(bytes).stats()).channels.some((c) => c.stdev > 10),
       "watermark is visible on solid input",
     );
     const ex = await exifr.parse(
@@ -178,7 +179,7 @@ test("manual confirmation, cancellation, overwrite protection and stripped metad
   const r = await run([...args, "--confirm"], "y\n");
   assert.equal(r.code, 0, JSON.stringify(r));
   assert.match(r.err, /确认/);
-  assert.equal((await sharp(out).metadata()).exif, undefined);
+  assert.equal((await sharp(await readFile(out)).metadata()).exif, undefined);
   assert.equal((await run([...args, "--yes"])).error.code, "EXISTS");
   assert.equal(
     (await run(["render", input, "-o", input, "--yes"])).error.code,
@@ -226,7 +227,7 @@ test("concurrent exports preserve the first published file", async (t) => {
   const args = ["render", input, "-o", output, "--yes"];
   const runs = await Promise.all([run(args), run(args)]);
   assert.deepEqual(runs.map((r) => r.code).sort(), [0, 1]);
-  assert.equal((await sharp(output).metadata()).format, "jpeg");
+  assert.equal((await sharp(await readFile(output)).metadata()).format, "jpeg");
   assert.deepEqual((await readdir(dir)).sort(), [
     path.basename(input),
     "same.jpg",
