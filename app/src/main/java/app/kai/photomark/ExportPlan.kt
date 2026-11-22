@@ -1,6 +1,8 @@
 package app.kai.photomark
 
 import androidx.exifinterface.media.ExifInterface
+import java.time.DateTimeException
+import java.time.LocalDate
 
 enum class HdrHandling(val label: String) {
     NONE("标准动态范围"), KEPT("保留 Ultra HDR 增益图"), SDR("转为 SDR"),
@@ -153,7 +155,7 @@ internal fun manualExif(overrides: Map<MetadataField, String>, recorded: PhotoMe
                 ?.let { tags[ExifInterface.TAG_FOCAL_LENGTH_IN_35MM_FILM] = Math.round(it).toString() } ?: unreadable()
             MetadataField.APERTURE -> value.amount()?.takeIf { it > 0 && it < 1000 }
                 ?.let { tags[ExifInterface.TAG_F_NUMBER] = it.toString() } ?: unreadable()
-            MetadataField.SHUTTER -> value.amount()?.takeIf { it > 0 && it < 100_000 }
+            MetadataField.SHUTTER -> value.shutterSeconds()?.takeIf { it > 0 && it < 100_000 }
                 ?.let { tags[ExifInterface.TAG_EXPOSURE_TIME] = it.toString() } ?: unreadable()
             MetadataField.ISO -> {
                 // "12,800" groups thousands here, where other fields read a comma as a decimal point.
@@ -193,10 +195,25 @@ internal fun String.amount(signed: Boolean = false): Double? {
     return if (signed && sign.isNotEmpty() && sign != "+") -value else value
 }
 
+private val shutterPattern = Regex(
+    """(\d+(?:[.,]\d+)?(?:\s*/\s*\d+(?:[.,]\d+)?)?)\s*(ms|毫秒|s|sec|秒|"|″)?""",
+    RegexOption.IGNORE_CASE,
+)
+
+private fun String.shutterSeconds(): Double? {
+    val match = shutterPattern.matchEntire(trim()) ?: return null
+    val amount = match.groupValues[1].amount() ?: return null
+    return if (match.groupValues[2].lowercase() in setOf("ms", "毫秒")) amount / 1000 else amount
+}
+
 /** A typed date as EXIF stores it, "2026:11:20 17:42:10". A date without a time is taken as midnight. */
 internal fun String.exifTime(): String? {
-    val (y, m, d, hour, minute, second) = timePattern.find(trim())?.destructured ?: return null
-    if (m.toInt() !in 1..12 || d.toInt() !in 1..31) return null
+    val (y, m, d, hour, minute, second) = timePattern.matchEntire(trim())?.destructured ?: return null
+    try {
+        LocalDate.of(y.toInt(), m.toInt(), d.toInt())
+    } catch (_: DateTimeException) {
+        return null
+    }
     val h = hour.ifEmpty { "0" }.toInt()
     val min = minute.ifEmpty { "0" }.toInt()
     val s = second.ifEmpty { "0" }.toInt()

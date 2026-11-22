@@ -1,0 +1,45 @@
+{
+  "name": "kaiprint",
+  "version": "0.0.2",
+  "description": "Offline photography watermarks with camera logos, EXIF captions and batch export",
+  "author": "kkellyoffical",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zhizhiheng/kaiprint.git"
+  },
+  "homepage": "https://github.com/zhizhiheng/kaiprint#readme",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "bin": {
+    "kaiprint": "cli/kaiprint.js"
+  },
+  "files": [
+    "cli/*.js",
+    "cli/models.json",
+    "docs/cli.md",
+    "docs/brand-marks.md",
+    "app/src/main/assets/brands/*.svg",
+    "app/src/main/assets/models/**/*.svg",
+    "model-marks/catalog.csv",
+    "app/src/main/assets/places/cities.tsv"
+  ],
+  "scripts": {
+    "test": "node --test cli/test/cli.test.js",
+    "lint": "prettier --check \"cli/**/*.js\" package.json",
+    "check": "npm run lint && npm test && python3 tools/check-project.py"
+  },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/",
+    "access": "public"
+  },
+  "dependencies": {
+    "exifr": "7.1.3",
+    "sharp": "0.35.5"
+  },
+  "devDependencies": {
+    "prettier": "3.10.1"
+  }
+}

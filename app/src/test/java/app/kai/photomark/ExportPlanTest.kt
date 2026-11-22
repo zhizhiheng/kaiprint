@@ -150,6 +150,34 @@ class ExportPlanTest {
         assertNull("Nov 20".exifTime())
     }
 
+    @Test fun manualShutterHonoursUnitsAndDatesMustExist() {
+        val settings = ExportSettings(writeManual = true)
+        for (value in listOf("10 ms", "10毫秒", "1/100 s", "0.01秒")) {
+            val plan = plan(settings, overrides = mapOf(MetadataField.SHUTTER to value))
+            assertEquals("0.01", plan.tags[ExifInterface.TAG_EXPOSURE_TIME])
+        }
+        for (date in listOf("2026-02-31", "2025-02-29", "2026-11-20 nonsense")) assertNull(date.exifTime())
+        assertEquals("2024:02:29 00:00:00", "2024-02-29".exifTime())
+        assertTrue(plan(settings, overrides = mapOf(MetadataField.SHUTTER to "10 minutes")).notes.isNotEmpty())
+    }
+
+    @Test fun failedMotionWriteKeepsOriginalStill() {
+        val folder = java.nio.file.Files.createTempDirectory("kaiprint-motion").toFile()
+        try {
+            val still = java.io.File(folder, "still.jpg").apply { writeText("complete JPEG") }
+            assertThrows(java.io.IOException::class.java) {
+                replaceStill(still) { staged ->
+                    staged.writeText("partial")
+                    throw java.io.IOException("simulated write failure")
+                }
+            }
+            assertEquals("complete JPEG", still.readText())
+            assertEquals(listOf("still.jpg"), folder.list()?.toList())
+        } finally {
+            folder.deleteRecursively()
+        }
+    }
+
     @Test fun tiffTakesTypedMakeModelAndTimeOnly() {
         val plan = plan(ExportSettings(format = OutputFormat.TIFF, writeManual = true), overrides = mapOf(
             MetadataField.MAKE to "Leica", MetadataField.DATE to "2026-11-20 17:42", MetadataField.MODEL to "徕卡 M6",

@@ -2,7 +2,19 @@
 
 ![光印开源摄影水印工具，墨绿金色横幅与伦敦夜景样片](docs/brand/kaiprint-banner.webp)
 
-光印是 Android 摄影水印工作台。可在同一张照片上叠加署名、Logo、相机参数和边框，保存排版后批量导出。照片读取、渲染和预设管理均在设备上完成。成片独立保存到 `Pictures/光印`。
+光印提供 Android 摄影水印工作台和可供 agent 调用的命令行工具。可在同一张照片上叠加署名、Logo、相机参数和边框，保存排版后批量导出。照片读取、渲染和预设管理均在设备上完成。Android 成片独立保存到 `Pictures/光印`。
+
+## 命令行
+
+安装 Node.js 22.12 或更新版本后，可直接运行。手动模式先显示水印参数和成片路径，脚本模式用 `--yes --json` 批量出图。CLI 支持画廊白框、照片内角标和雾面展框，和安卓共用品牌及机型 SVG。
+
+```sh
+npm install -g kaiprint@0.0.2
+kaiprint render DSC_0123.jpg --logo model --set "author=凯" --confirm
+kaiprint render A.jpg B.jpg --out-dir prints --template frosted-gallery --yes --json
+```
+
+[命令行参数、RAW 伴随图、agent 用法与维护检查](https://github.com/zhizhiheng/kaiprint/blob/main/docs/cli.md)
 
 ## 水印成片
 

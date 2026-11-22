@@ -32,6 +32,8 @@ import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.IOException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.util.Locale
 
 private const val EXPORT_PATH = "Pictures/光印/"
@@ -205,7 +207,7 @@ class Exporter(private val app: PhotoMarkApp) {
             if (!settings.keepMetadata || !settings.keepLocation) MotionPhoto.dropLocation(source, video)
             MotionPhoto.attach(scratch.readBytes(), source, video)
         } else null
-        if (joined != null) scratch.writeBytes(joined)
+        if (joined != null) replaceStill(scratch) { it.writeBytes(joined) }
         joined != null
     } catch (_: IOException) {
         false
@@ -217,6 +219,17 @@ class Exporter(private val app: PhotoMarkApp) {
         val stem = input.photo.stem.replace(Regex("[^\\p{L}\\p{N}_.-]"), "_").take(48).ifBlank { "photo" }
         val position = String.format(Locale.ROOT, "%03d", item.position + 1)
         return "${stem}_${item.jobId.take(10)}_$position.${format.extension}"
+    }
+}
+
+/** A failed motion export must leave the complete static JPEG available for fallback. */
+internal fun replaceStill(still: File, write: (File) -> Unit) {
+    val staged = File.createTempFile("export-motion-", ".jpg", still.parentFile)
+    try {
+        write(staged)
+        Files.move(staged.toPath(), still.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+    } finally {
+        staged.delete()
     }
 }
 

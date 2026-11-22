@@ -54,6 +54,25 @@ class MetadataExportTest {
         }
     }
 
+    @Test fun modelWithoutMakerKeepsItsBrandAfterFormatting() {
+        val file = sample("model-only.jpg")
+        try {
+            for ((model, brand) in mapOf("NIKON D850" to BrandMark.NIKON, "DC-S5M2" to BrandMark.LUMIX,
+                    "LEICA Q3" to BrandMark.LEICA)) {
+                ExifInterface(file).apply {
+                    setAttribute(ExifInterface.TAG_MAKE, null)
+                    setAttribute(ExifInterface.TAG_MODEL, model)
+                    saveAttributes()
+                }
+                val metadata = app.photos.info(PhotoGroup(photo(file))).metadata
+                assertEquals(brand, BrandMark.AUTO.resolve(metadata, emptyMap()))
+                assertNull(metadata.exif[ExifInterface.TAG_MAKE])
+            }
+        } finally {
+            file.delete()
+        }
+    }
+
     @Test fun exportKeepsTheSourceAuthorAndWritesPositionOnlyWhenAsked() = runBlocking(Dispatchers.IO) {
         val file = sample("credit.JPG")
         try {

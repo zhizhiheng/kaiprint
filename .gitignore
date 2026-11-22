@@ -8,3 +8,6 @@ local.properties
 *.jks
 *.keystore
 .DS_Store
+node_modules/
+kaiprint-*.tgz
+__pycache__/

@@ -473,7 +473,7 @@ private fun metadata(exif: ExifInterface?, raw: RawInfo?): PhotoMetadata {
     val values = buildMap {
         val make = tags[ExifInterface.TAG_MAKE]
         val model = tags[ExifInterface.TAG_MODEL]
-        make?.let { Cameras.make(it, model) }?.let { put(MetadataField.MAKE, it) }
+        Cameras.make(make, model)?.let { put(MetadataField.MAKE, it) }
         model?.let { Cameras.model(make, it) }?.let { put(MetadataField.MODEL, it) }
         Lenses.display(tags[ExifInterface.TAG_LENS_MODEL], tags[ExifInterface.TAG_LENS_MAKE],
             tags[ExifInterface.TAG_LENS_SPECIFICATION], make, model)?.let { put(MetadataField.LENS, it) }

@@ -1,0 +1,295 @@
+[
+  [
+    "nikon/z-9.svg",
+    "Z9"
+  ],
+  [
+    "nikon/z-8.svg",
+    "Z8"
+  ],
+  [
+    "nikon/z-7ii.svg",
+    "Z7II"
+  ],
+  [
+    "nikon/z-7.svg",
+    "Z7"
+  ],
+  [
+    "nikon/z-6iii.svg",
+    "Z6III"
+  ],
+  [
+    "nikon/z-6ii.svg",
+    "Z6II"
+  ],
+  [
+    "nikon/z-6.svg",
+    "Z6"
+  ],
+  [
+    "nikon/z-5ii.svg",
+    "Z5II"
+  ],
+  [
+    "nikon/z-5iic.svg",
+    "Z5IIC"
+  ],
+  [
+    "nikon/z-5.svg",
+    "Z5"
+  ],
+  [
+    "nikon/zf.svg",
+    "Zf"
+  ],
+  [
+    "nikon/z-50ii.svg",
+    "Z50II"
+  ],
+  [
+    "nikon/z-50.svg",
+    "Z50"
+  ],
+  [
+    "nikon/z-30.svg",
+    "Z30"
+  ],
+  [
+    "nikon/zfc.svg",
+    "Zfc"
+  ],
+  [
+    "nikon/d850.svg",
+    "D850"
+  ],
+  [
+    "nikon/d7500.svg",
+    "D7500"
+  ],
+  [
+    "nikon/zr.svg",
+    "ZR"
+  ],
+  [
+    "nikon/d780.svg",
+    "D780"
+  ],
+  [
+    "canon/eos-r1.svg",
+    "EOS R1"
+  ],
+  [
+    "canon/eos-r3.svg",
+    "EOS R3"
+  ],
+  [
+    "canon/eos-r5-ii.svg",
+    "EOS R5 Mark II"
+  ],
+  [
+    "canon/eos-r5.svg",
+    "EOS R5"
+  ],
+  [
+    "canon/eos-r5c.svg",
+    "EOS R5 C"
+  ],
+  [
+    "canon/eos-r6-ii.svg",
+    "EOS R6 Mark II"
+  ],
+  [
+    "canon/eos-r6.svg",
+    "EOS R6"
+  ],
+  [
+    "canon/eos-r8.svg",
+    "EOS R8"
+  ],
+  [
+    "canon/eos-rp.svg",
+    "EOS RP"
+  ],
+  [
+    "canon/eos-r50.svg",
+    "EOS R50"
+  ],
+  [
+    "canon/eos-r50v.svg",
+    "EOS R50 V"
+  ],
+  [
+    "canon/eos-r100.svg",
+    "EOS R100"
+  ],
+  [
+    "sony/a1-ii.svg",
+    "α1 II"
+  ],
+  [
+    "sony/a1.svg",
+    "α1"
+  ],
+  [
+    "sony/a9-iii.svg",
+    "α9 III"
+  ],
+  [
+    "sony/a7r-vi.svg",
+    "α7R VI"
+  ],
+  [
+    "sony/a7r-v.svg",
+    "α7R V"
+  ],
+  [
+    "sony/a7r-iv.svg",
+    "α7R IV"
+  ],
+  [
+    "sony/a7s-iii.svg",
+    "α7S III"
+  ],
+  [
+    "sony/a7-v.svg",
+    "α7 V"
+  ],
+  [
+    "sony/a7-iv.svg",
+    "α7 IV"
+  ],
+  [
+    "sony/a7-iii.svg",
+    "α7 III"
+  ],
+  [
+    "sony/a7c-ii.svg",
+    "α7C II"
+  ],
+  [
+    "sony/a7cr.svg",
+    "α7CR"
+  ],
+  [
+    "sony/a7c.svg",
+    "α7C"
+  ],
+  [
+    "sony/a6700.svg",
+    "α6700"
+  ],
+  [
+    "sony/a6400.svg",
+    "α6400"
+  ],
+  [
+    "fujifilm/gfx100-ii.svg",
+    "GFX100 II"
+  ],
+  [
+    "fujifilm/gfx100s-ii.svg",
+    "GFX100S II"
+  ],
+  [
+    "fujifilm/x-t5.svg",
+    "X-T5"
+  ],
+  [
+    "fujifilm/x-t30-iii.svg",
+    "X-T30 III"
+  ],
+  [
+    "fujifilm/x-m5.svg",
+    "X-M5"
+  ],
+  [
+    "fujifilm/x-pro3.svg",
+    "X-Pro3"
+  ],
+  [
+    "fujifilm/x-h2s.svg",
+    "X-H2S"
+  ],
+  [
+    "fujifilm/x-h2.svg",
+    "X-H2"
+  ],
+  [
+    "fujifilm/x-e5.svg",
+    "X-E5"
+  ],
+  [
+    "fujifilm/x-s20.svg",
+    "X-S20"
+  ],
+  [
+    "fujifilm/x-t50.svg",
+    "X-T50"
+  ],
+  [
+    "fujifilm/x-t30-ii.svg",
+    "X-T30 II"
+  ],
+  [
+    "fujifilm/gfx50s-ii.svg",
+    "GFX50S II"
+  ],
+  [
+    "lumix/s1r-ii.svg",
+    "S1RII"
+  ],
+  [
+    "lumix/s1-ii.svg",
+    "S1II"
+  ],
+  [
+    "lumix/s1-iie.svg",
+    "S1IIE"
+  ],
+  [
+    "lumix/s5-ii.svg",
+    "S5II"
+  ],
+  [
+    "lumix/s5-iix.svg",
+    "S5IIX"
+  ],
+  [
+    "lumix/s9.svg",
+    "S9"
+  ],
+  [
+    "lumix/g100d.svg",
+    "G100D"
+  ],
+  [
+    "om-system/om-1-ii.svg",
+    "OM-1 Mark II"
+  ],
+  [
+    "om-system/om-3.svg",
+    "OM-3"
+  ],
+  [
+    "om-system/om-5-ii.svg",
+    "OM-5 Mark II"
+  ],
+  [
+    "om-system/om-5.svg",
+    "OM-5"
+  ],
+  [
+    "om-system/pen-e-p7.svg",
+    "PEN E-P7",
+    "E-P7"
+  ],
+  [
+    "pentax/k-1-ii.svg",
+    "K-1 Mark II"
+  ],
+  [
+    "pentax/k-3-iii.svg",
+    "K-3 Mark III"
+  ]
+]
