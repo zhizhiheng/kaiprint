@@ -1,0 +1,28 @@
+name: Publish MCP registry entry
+on: workflow_dispatch
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify the published npm manifest
+        run: |
+          package=$(jq -r '.packages[0].identifier | @uri' server.json)
+          version=$(jq -r .version server.json)
+          curl -fsSL "https://registry.npmjs.org/$package/$version" |
+            jq -e --slurpfile server server.json '.mcpName == $server[0].name and .version == $server[0].version and .name == $server[0].packages[0].identifier'
+      - name: Install the registry publisher
+        run: |
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/publisher.tgz" https://github.com/modelcontextprotocol/registry/releases/download/v1.8.13/mcp-publisher_linux_amd64.tar.gz
+          echo "7a708f418788d962a1ca3d6744d4cf86ed95f790d33c7abf562916ff83be61d2  $RUNNER_TEMP/publisher.tgz" | sha256sum -c -
+          tar -C "$RUNNER_TEMP" -xzf "$RUNNER_TEMP/publisher.tgz" mcp-publisher
+      - name: Publish using repository identity
+        run: |
+          "$RUNNER_TEMP/mcp-publisher" login github-oidc
+          "$RUNNER_TEMP/mcp-publisher" publish

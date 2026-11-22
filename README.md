@@ -9,12 +9,16 @@
 安装 Node.js 22.12 或更新版本后，可直接运行。手动模式先显示水印参数和成片路径，脚本模式用 `--yes --json` 批量出图。CLI 支持画廊白框、照片内角标和雾面展框，和安卓共用品牌及机型 SVG。
 
 ```sh
-npm install -g kaiprint@0.0.2
+npm install -g @kkellyoffical/kaiprint@0.0.2
+kaiprint metadata DSC_0123.NEF --tag Model --tag ISO --json
+kaiprint metadata edit DSC_0123.jpg --set "creator=林凯" --confirm
 kaiprint render DSC_0123.jpg --logo model --set "author=凯" --confirm
 kaiprint render A.jpg B.jpg --out-dir prints --template frosted-gallery --yes --json
 ```
 
-[命令行参数、RAW 伴随图、agent 用法与维护检查](https://github.com/zhizhiheng/kaiprint/blob/main/docs/cli.md)
+同一份 0.0.2 安装包提供 CLI、MCP 服务和 KaiPrint skill。元数据命令可以直接读取单独的 RAW，默认修改副本。旧的无作用域 npm 包提供基础水印命令。
+
+[MCP 配置与 skill 安装](https://github.com/zhizhiheng/kaiprint/blob/main/docs/agents.md) · [命令行参数、RAW 伴随图及维护检查](https://github.com/zhizhiheng/kaiprint/blob/main/docs/cli.md)
 
 ## 水印成片
 

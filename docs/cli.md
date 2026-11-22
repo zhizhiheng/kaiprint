@@ -3,10 +3,53 @@
 需要 Node.js 22.12 或更新版本。安装后，读取照片、识别机型、查询城市和渲染均在本机完成。首次安装需要联网下载依赖和适合当前系统的图像库。中文排版使用系统字体，Linux 可安装 Noto Sans CJK。
 
 ```sh
-npm install --global kaiprint@0.0.2
+npm install --global @kkellyoffical/kaiprint@0.0.2
 kaiprint --version
 kaiprint templates
 ```
+
+完整的 0.0.2 通过个人作用域包发布。原先的无作用域 `kaiprint@0.0.2` 是基础水印版，npm 的同名同版本内容已固定。如全局安装提示 `kaiprint` 命令已存在，可继续保留旧安装，并用 `npx --yes --package=@kkellyoffical/kaiprint@0.0.2 -- kaiprint` 运行新版。元数据工具随包分发 ExifTool，Linux 和 macOS 需要可用的 Perl，Windows 使用随包的可执行文件。[npm 发布规则](https://docs.npmjs.com/cli/v11/commands/npm-publish/)
+
+## 读取原始拍摄信息
+
+```sh
+kaiprint metadata DSC_0123.NEF
+kaiprint metadata read A.jpg B.NEF --tag Model --tag LensModel --tag ExifIFD:ExposureTime --json
+kaiprint metadata fields --json
+```
+
+第一条直接读取独立 RAW。读取范围包括文件格式、尺寸、可用的 EXIF、XMP、IPTC、GPS 和厂商私有标签。结果使用 `组名:标签名`。例如查询 `ISO` 可能同时返回 `ExifIFD:ISO` 和 `Nikon:ISO`。指定 `ExifIFD:ISO` 只返回标准字段。ExifTool 计算的值标为 `Composite`，二进制大块只显示描述。只需查看少数信息时可重复使用 `--tag`。需要查看水印版式、输出尺寸或 RAW 伴随图时使用 `inspect`。
+
+## 修改文件里的标签
+
+```sh
+kaiprint metadata edit DSC_0123.jpg --set iso=400 --set "shutter=10 ms" --set "creator=林凯" --dry-run
+kaiprint metadata edit DSC_0123.jpg --set iso=400 --set "shutter=10 ms" --set "creator=林凯" --confirm
+kaiprint metadata DSC_0123.metadata.jpg --tag ExifIFD:ISO --tag ExposureTime --tag XMP-dc:Creator
+```
+
+默认在原图旁新建 `DSC_0123.metadata.jpg`。单次处理一个文件，可用 `-o` 指定同扩展名副本。编辑器用 ExifTool 更新容器中的标签，逐项回读再保存。JPEG 编辑保留压缩图像数据，真实 NEF 可以直接改写受支持的标签。各格式可写字段取决于 ExifTool，无法写入或回读不一致时会报告失败。已有输出路径会提示冲突。
+
+| 要修改的内容 | CLI 字段 | 示例 |
+| --- | --- | --- |
+| 器材 | `make`、`model`、`lens` | `--set "lens=NIKKOR Z 40mm f/2"` |
+| 拍摄参数 | `iso`、`shutter`、`aperture`、`focal` | `--set shutter=1/125 --set aperture=f/4 --set "focal=50 mm"` |
+| 原始拍摄时间 | `date` | `--set "date=2024-02-29 19:02:03"`，使用照片的当地时间 |
+| EXIF 署名、版权 | `artist`、`copyright` | 写入 ASCII，适用于传统相册软件 |
+| XMP 署名、标题、说明、权利 | `creator`（别名 `author`）、`title`、`description`、`rights` | `--set "creator=林凯" --set "title=海边"`，支持中文 |
+| 拍摄坐标 | `gps` | `--set "gps=31.23,121.47"`，依次为十进制纬度、经度 |
+
+也可用表内字段对应的完整标签名，例如 `--set ExifIFD:ISO=400`。用 `--unset copyright` 删除指定标签。`--unset gps` 删除 EXIF 纬度、经度及方向四项，其他命名空间的地点文字、海拔、嵌入视频和厂商私有数据可能仍在文件中。修改标准 ISO 时，厂商私有 ISO 保留其原始记录。
+
+如果需要更改原文件：
+
+```sh
+kaiprint metadata edit DSC_0123.jpg --set "creator=林凯" --in-place --confirm
+```
+
+该模式先生成经回读验证的临时文件，再备份原文件为 `DSC_0123.jpg.kaiprint.bak` 并替换原路径。备份存在或照片在预览后被修改时会停止。恢复时可将备份复制回原文件名。脚本执行用 `--yes --json`，成功结果的 `output` 和 `backup` 给出实际路径。
+
+`render --set author=…` 调整水印上的文字。`metadata edit --set creator=…` 编辑文件里的 XMP 作者。CLI 绘制水印时优先读取可用的 XMP 作者，再使用 EXIF Artist。原始元数据读取命令可读出精确位置和序列号。
 
 ## 给一张照片加水印
 
@@ -17,6 +60,8 @@ kaiprint render DSC_0123.jpg --template gallery --logo model --set "author=凯" 
 终端会显示像素来源、画幅、机型标志、每个可见字段和输出路径。输入 `y` 或「是」执行，输入 `n` 或直接回车取消。普通交互终端默认会询问。加 `--dry-run` 只看计划。可重复使用 `--set` 修改参数，值留空可隐藏对应字段。默认在源图旁新建 `DSC_0123.kaiprint.jpg`，已有文件会保留并报告冲突。
 
 ## 交给 agent 或脚本
+
+MCP 接入、工具参数和 skill 安装见 [Agent 使用说明](https://github.com/zhizhiheng/kaiprint/blob/main/docs/agents.md)。
 
 ```sh
 kaiprint templates --json
@@ -40,7 +85,7 @@ kaiprint render DSC_0123.NEF DSC_0124.NEF --out-dir prints --template frosted-ga
 | 尺寸 | 默认保留校正方向后的照片像素，再向外加边框。`--max-edge 2048` 限制整张成片的长边。成片为静态 SDR，色域为 sRGB。 |
 | 成片信息 | 默认写入可用的机型、镜头、曝光、拍摄时间等常用字段及 ASCII 作者和版权。GPS、序列号、原始缩略图不随文件导出。`--set` 修改画面文字。`--strip-metadata` 移除成片的拍摄标签。 |
 
-相机标志与机型素材来源见[素材清单](https://github.com/zhizhiheng/kaiprint/blob/main/docs/brand-marks.md)。离线城市数据取自 GeoNames 的 cities15000，使用 CC BY 4.0 许可；仓库提供生成脚本。[GeoNames 数据](https://www.geonames.org/) · [城市库生成脚本](https://github.com/zhizhiheng/kaiprint/blob/main/tools/build-cities.py)
+相机标志与机型素材来源见[素材清单](https://github.com/zhizhiheng/kaiprint/blob/main/docs/brand-marks.md)。离线城市数据取自 GeoNames 的 cities15000，使用 CC BY 4.0 许可。仓库提供生成脚本。[GeoNames 数据](https://www.geonames.org/) · [城市库生成脚本](https://github.com/zhizhiheng/kaiprint/blob/main/tools/build-cities.py)
 
 ## 维护与发包
 
@@ -56,4 +101,4 @@ python3 tools/check-package.py
 
 Android 改动由 GitHub 自动运行两种构建的单元测试、相册版 lint、APK 与 AAB 构建。需要设备回归时，可在 Android 工作流手动勾选 `device_tests`。依赖外部样片与 100 张压力测试的本地运行方式见[格式验证](https://github.com/zhizhiheng/kaiprint/blob/main/docs/compatibility.md)。
 
-发布到个人 npm 账号前，用 `npm whoami --registry=https://registry.npmjs.org` 核对账号，执行 `npm pack --dry-run` 检查包内容。npm 版使用无作用域包名 `kaiprint`，安卓正式版通过 GitHub Releases 发布，两者独立。
+发布到个人 npm 账号前，用 `npm whoami --registry=https://registry.npmjs.org` 核对账号，执行 `npm pack --dry-run` 检查包内容。完整 npm 版使用个人作用域包名 `@kkellyoffical/kaiprint`，安卓正式版通过 GitHub Releases 发布，两者独立。

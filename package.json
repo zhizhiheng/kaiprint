@@ -1,7 +1,7 @@
 {
-  "name": "kaiprint",
+  "name": "@kkellyoffical/kaiprint",
   "version": "0.0.2",
-  "description": "Offline photography watermarks with camera logos, EXIF captions and batch export",
+  "description": "Local photography watermarks and original metadata editing for CLI, MCP and agent skills",
   "author": "kkellyoffical",
   "license": "MIT",
   "repository": {
@@ -14,7 +14,8 @@
     "node": ">=22.12.0"
   },
   "bin": {
-    "kaiprint": "cli/kaiprint.js"
+    "kaiprint": "cli/kaiprint.js",
+    "kaiprint-mcp": "cli/mcp.js"
   },
   "files": [
     "cli/*.js",
@@ -24,10 +25,13 @@
     "app/src/main/assets/brands/*.svg",
     "app/src/main/assets/models/**/*.svg",
     "model-marks/catalog.csv",
-    "app/src/main/assets/places/cities.tsv"
+    "app/src/main/assets/places/cities.tsv",
+    "skills/kaiprint/SKILL.md",
+    "docs/agents.md",
+    "server.json"
   ],
   "scripts": {
-    "test": "node --test cli/test/cli.test.js",
+    "test": "node --test cli/test/cli.test.js cli/test/metadata.test.js cli/test/mcp.test.js",
     "lint": "prettier --check \"cli/**/*.js\" package.json",
     "check": "npm run lint && npm test && python3 tools/check-project.py"
   },
@@ -36,10 +40,14 @@
     "access": "public"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2",
     "exifr": "7.1.3",
-    "sharp": "0.35.5"
+    "exiftool-vendored": "39.4.0",
+    "sharp": "0.35.5",
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "prettier": "3.10.1"
-  }
+  },
+  "mcpName": "io.github.zhizhiheng/kaiprint"
 }

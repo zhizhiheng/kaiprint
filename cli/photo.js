@@ -56,7 +56,7 @@ async function readTags(file) {
     return {};
   } // An image with unreadable EXIF can still be rendered.
 }
-async function inputInfo(input) {
+async function inputInfo(input, resolveInput) {
   if (!(await stat(input)).isFile()) throw new Error("需要照片文件：" + input);
   if (!raw.has(path.extname(input).toLowerCase()))
     return { pixelFile: input, metadata: {} };
@@ -78,6 +78,7 @@ async function inputInfo(input) {
   for (const candidate of candidates) {
     const pixelFile = path.join(base.dir, candidate.name);
     if (!(await stat(pixelFile).catch(() => null))?.isFile()) continue;
+    if (resolveInput) await resolveInput(pixelFile);
     const companion = await readTags(pixelFile);
     if (
       original.DateTimeOriginal &&
@@ -93,7 +94,10 @@ async function inputInfo(input) {
 }
 
 export async function inspectPhoto(input, options) {
-  const { pixelFile, metadata: rawTags } = await inputInfo(input);
+  const { pixelFile, metadata: rawTags } = await inputInfo(
+    input,
+    options.resolveInput,
+  );
   const image = await sharp(pixelFile, { failOn: "error" }).metadata();
   if (
     !["jpeg", "png", "webp", "tiff", "heif"].includes(image.format) ||
@@ -104,6 +108,19 @@ export async function inspectPhoto(input, options) {
     image.exif.subarray(0, 6).equals(Buffer.from("Exif\0\0")) ? 6 : 0,
   );
   const metadata = { ...(await readTags(embedded ?? pixelFile)), ...rawTags };
+  let captionsFromFile = {};
+  if (image.xmp || input !== pixelFile) {
+    const { xmpCaptions } = await import("./metadata.js");
+    const primary = await xmpCaptions(input).catch(() => ({}));
+    const companion =
+      input !== pixelFile && image.xmp
+        ? await xmpCaptions(pixelFile).catch(() => ({}))
+        : {};
+    captionsFromFile = {
+      author: primary.author ?? companion.author,
+      title: primary.title ?? companion.title,
+    };
+  }
   const oriented =
     image.autoOrient ||
     (image.orientation >= 5
@@ -129,9 +146,9 @@ export async function inspectPhoto(input, options) {
       /^(\d{4}):(\d\d):(\d\d)/,
       "$1-$2-$3",
     ),
-    author: metadata.Artist || "",
+    author: captionsFromFile.author || metadata.Artist || "",
     location: "",
-    title: "",
+    title: captionsFromFile.title || "",
     ...options.set,
   };
   if (!("location" in options.set) && options.place !== "off") {

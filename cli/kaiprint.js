@@ -1,24 +1,16 @@
 #!/usr/bin/env node
-import path from "node:path";
-
 import { parseArgs } from "node:util";
-import { stdin, stdout, stderr } from "node:process";
-import { createInterface } from "node:readline/promises";
-import {
-  lstat,
-  realpath,
-  mkdtemp,
-  mkdir,
-  link,
-  rm,
-  copyFile,
-} from "node:fs/promises";
-import { constants } from "node:fs";
+import { stdout, stderr } from "node:process";
 import pkg from "../package.json" with { type: "json" };
-import { fields, defaultFields, templates, inspectPhoto } from "./photo.js";
-import { renderPhoto } from "./render.js";
-
+import { fields, templates } from "./photo.js";
+import { prepareWatermarks, save, describe } from "./watermarks.js";
+import { usage } from "./files.js";
+import { confirmed } from "./confirm.js";
 const help = `KaiPrint · 光印
+  kaiprint metadata [read] 照片... [--tag 标签] [--json]
+  kaiprint metadata edit 照片 --set iso=400 [--unset copyright] [-o 副本 | --in-place] [--dry-run | --confirm | --yes]
+  kaiprint skill [--install 技能父目录] [--json]
+  kaiprint-mcp --root 照片目录
   kaiprint templates [--json]
   kaiprint inspect 照片... [选项] [--json]
   kaiprint render 照片... [选项] [--dry-run | --confirm | --yes] [--json]
@@ -46,6 +38,10 @@ const help = `KaiPrint · 光印
       kaiprint render A.jpg B.jpg --out-dir prints --template frosted-gallery --yes --json`;
 const opts = {
   help: { type: "boolean", short: "h" },
+  tag: { type: "string", multiple: true },
+  unset: { type: "string", multiple: true },
+  "in-place": { type: "boolean" },
+  install: { type: "string" },
   version: { type: "boolean", short: "v" },
   json: { type: "boolean" },
   output: { type: "string", short: "o" },
@@ -63,118 +59,6 @@ const opts = {
   confirm: { type: "boolean" },
   yes: { type: "boolean", short: "y" },
 };
-function usage(message) {
-  throw Object.assign(new Error(message), { code: "USAGE" });
-}
-function choice(value, allowed, label) {
-  if (!allowed.includes(value)) usage(label + " 可选值：" + allowed.join(", "));
-  return value;
-}
-function number(value, min, max, label) {
-  const n = Number(value);
-  if (!/^\d+$/.test(value) || !Number.isSafeInteger(n) || n < min || n > max)
-    usage(label + " 超出范围 " + min + ".." + max);
-  return n;
-}
-function normalize(v) {
-  const set = {};
-  for (const entry of v.set || []) {
-    const i = entry.indexOf("=");
-    if (i < 1) usage("--set 需要 字段=值");
-    const key = choice(entry.slice(0, i), fields, "--set");
-    const value = entry.slice(i + 1);
-    if (value.length > 180 || /[\u0000-\u001f\u007f]/.test(value))
-      usage("--set 需要单行且最多 180 个字符");
-    set[key] = value;
-  }
-  const selected =
-    v.fields === undefined
-      ? defaultFields
-      : v.fields === "none"
-        ? []
-        : v.fields.split(",").map((f) => choice(f.trim(), fields, "--fields"));
-  const ext = v.output && path.extname(v.output).toLowerCase();
-  const inferred =
-    ext &&
-    { ".jpeg": "jpeg", ".jpg": "jpeg", ".png": "png", ".webp": "webp" }[ext];
-  if (v.output && !inferred)
-    usage("--output 需要 .jpg、.jpeg、.png 或 .webp 扩展名");
-  if (v.format && inferred && inferred !== v.format)
-    usage("输出扩展名与 --format 不一致");
-  if (v.output && v["out-dir"]) usage("--output 和 --out-dir 只能选一项");
-  if ([v.confirm, v.yes, v["dry-run"]].filter(Boolean).length > 1)
-    usage("--confirm、--yes 和 --dry-run 只能选一项");
-  return {
-    set,
-    fields: [...new Set(selected)],
-    template: choice(
-      v.template ?? "gallery",
-      Object.keys(templates),
-      "--template",
-    ),
-    logo: choice(
-      v.logo ?? "model",
-      ["model", "brand", "wordmark", "square", "none"],
-      "--logo",
-    ),
-    place: choice(v.place ?? "off", ["off", "city", "coords"], "--place"),
-    quality: number(v.quality ?? "92", 1, 100, "--quality"),
-    maxEdge:
-      v["max-edge"] === undefined
-        ? 0
-        : number(v["max-edge"], 1, 65535, "--max-edge"),
-    stripMetadata: !!v["strip-metadata"],
-    format: choice(
-      v.format ?? inferred ?? "jpeg",
-      ["jpeg", "png", "webp"],
-      "--format",
-    ),
-  };
-}
-function describe(p) {
-  return [
-    p.input + " → " + p.output,
-    `${templates[p.template]} · ${p.canvas.width} × ${p.canvas.height} px · ${p.format}` +
-      (p.quality === null ? "" : ` · 质量 ${p.quality}`),
-    p.metadataPolicy === "strip"
-      ? "文件元数据：移除拍摄标签"
-      : "文件元数据：保留常用拍摄标签，移除 GPS",
-    "像素来源：" + p.pixelFile,
-    "标志：" + (p.logo ?? "无"),
-    "水印：" +
-      (p.fields
-        .map((f) => p.printed[f])
-        .filter(Boolean)
-        .join(" · ") || "无文字"),
-  ].join("\n");
-}
-async function freeOutput(file) {
-  try {
-    await lstat(file);
-  } catch (e) {
-    if (e.code === "ENOENT") return;
-    throw e;
-  }
-  throw Object.assign(new Error("输出文件已存在：" + file), { code: "EXISTS" });
-}
-async function save(plan, options) {
-  const dir = path.dirname(plan.output);
-  await mkdir(dir, { recursive: true });
-  const tmp = await mkdtemp(path.join(dir, ".kaiprint-"));
-  try {
-    const staged = path.join(tmp, "photo." + options.format);
-    await renderPhoto(plan, options, staged);
-    try {
-      await link(staged, plan.output);
-    } catch (e) {
-      if (!["ENOTSUP", "EOPNOTSUPP", "EPERM", "ENOSYS"].includes(e.code))
-        throw e;
-      await copyFile(staged, plan.output, constants.COPYFILE_EXCL);
-    }
-  } finally {
-    await rm(tmp, { recursive: true, force: true });
-  }
-}
 const args = process.argv.slice(2),
   completed = [];
 let json = false;
@@ -182,100 +66,75 @@ function result(data, text) {
   stdout.write((json ? JSON.stringify(data) : text) + "\n");
 }
 try {
-  let parsed;
-  try {
-    parsed = parseArgs({ args, options: opts, allowPositionals: true });
-  } catch (e) {
-    json = args.includes("--json");
-    usage(e.message);
-  }
-  const {
-    values: v,
-    positionals: [command, ...files],
-  } = parsed;
-  json = !!v.json;
-  if (v.help || (!command && !v.version)) result({ help }, help);
-  else if (v.version) result({ version: pkg.version }, pkg.version);
-  else if (command === "templates") {
-    if (files.length) usage("templates 不接收输入文件");
-    result(
-      { templates, fields },
-      Object.entries(templates)
-        .map(([k, v]) => k + "  " + v)
-        .join("\n"),
-    );
+  if (args[0] === "mcp") {
+    const { startMcp } = await import("./mcp-server.js");
+    await startMcp(args.slice(1));
   } else {
-    choice(command, ["inspect", "render"], "命令");
-    if (!files.length) usage("请提供至少一张照片");
-    if (v.output && files.length !== 1) usage("多张照片请使用 --out-dir");
-    const opt = normalize(v),
-      plans = [],
-      targets = new Set();
-    for (const file of files) {
-      const input = path.resolve(file);
-      const plan = await inspectPhoto(input, opt);
-      const name =
-        path.parse(input).name +
-        ".kaiprint." +
-        (opt.format === "jpeg" ? "jpg" : opt.format);
-      const output = v.output
-        ? path.resolve(v.output)
-        : path.resolve(v["out-dir"] ?? path.dirname(input), name);
-      if (command === "render") {
-        await freeOutput(output);
-        const parent = path.dirname(output);
-        let dir;
-        try {
-          dir = await realpath(parent);
-        } catch (e) {
-          if (e.code !== "ENOENT") throw e;
-          dir = parent;
-        }
-        const pathKey = path.join(dir, path.basename(output));
-        const id =
-          process.platform === "win32" ? pathKey.toLowerCase() : pathKey;
-        if (targets.has(id)) usage("多个输入将写入同一文件：" + output);
-        targets.add(id);
-      }
-      plans.push({
-        ...plan,
-        output,
-        format: opt.format,
-        quality: opt.format === "png" ? null : opt.quality,
-      });
+    let parsed;
+    try {
+      parsed = parseArgs({ args, options: opts, allowPositionals: true });
+    } catch (e) {
+      json = args.includes("--json");
+      usage(e.message);
     }
-    if (command === "inspect" || v["dry-run"])
+    const {
+      values: v,
+      positionals: [command, ...files],
+    } = parsed;
+    json = !!v.json;
+    if (v.help || (!command && !v.version)) result({ help }, help);
+    else if (v.version) result({ version: pkg.version }, pkg.version);
+    else if (command === "metadata") {
+      const { runMetadata } = await import("./metadata-command.js");
+      await runMetadata(files, v, result);
+    } else if (command === "skill") {
+      const { skill } = await import("./skill.js");
+      if (
+        files.length ||
+        Object.keys(v).some((k) => !["install", "json"].includes(k))
+      )
+        usage("用法：kaiprint skill [--install 技能父目录]");
+      const data = await skill(v.install);
+      result(data, data.directory);
+    } else if (
+      Object.keys(v).some((k) =>
+        ["tag", "unset", "in-place", "install"].includes(k),
+      )
+    )
+      usage("该选项需要 metadata 或 skill 命令");
+    else if (command === "templates") {
+      if (files.length) usage("templates 不接收输入文件");
       result(
-        { status: "planned", photos: plans },
-        plans.map(describe).join("\n\n"),
+        { templates, fields },
+        Object.entries(templates)
+          .map(([k, v]) => k + "  " + v)
+          .join("\n"),
       );
-    else {
-      if (!v.yes) {
-        if (!v.confirm && (!stdin.isTTY || !stderr.isTTY))
-          usage("非交互渲染请加 --yes，查看计划用 --dry-run");
-        stderr.write(plans.map(describe).join("\n\n") + "\n");
-        const prompt = createInterface({ input: stdin, output: stderr });
-        let answer = "";
-        stderr.write("确认导出？[y/N] ");
-        try {
-          for await (const line of prompt) {
-            answer = line.trim();
-            break;
-          }
-        } finally {
-          prompt.close();
-        }
-
-        if (!/^(y|yes|是)$/i.test(answer)) {
+    } else {
+      if (!["inspect", "render"].includes(command))
+        usage("未知命令：" + command);
+      if (!files.length) usage("请提供至少一张照片");
+      if (v.output && files.length !== 1) usage("多张照片请使用 --out-dir");
+      const { plans, opt } = await prepareWatermarks(files, v, command);
+      if (command === "inspect" || v["dry-run"])
+        result(
+          { status: "planned", photos: plans },
+          plans.map(describe).join("\n\n"),
+        );
+      else {
+        if (!(await confirmed(v, plans.map(describe).join("\n\n")))) {
           result({ status: "cancelled", outputs: [] }, "已取消");
-          process.exit(0);
+        } else {
+          for (const plan of plans) {
+            await save(plan, opt);
+            completed.push(plan.output);
+          }
+          result(
+            { status: "written", outputs: completed },
+            completed.join("\n"),
+          );
         }
       }
-      for (const plan of plans) {
-        await save(plan, opt);
-        completed.push(plan.output);
-      }
-      result({ status: "written", outputs: completed }, completed.join("\n"));
     }
   }
 } catch (e) {
