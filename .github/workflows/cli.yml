@@ -29,5 +29,6 @@ jobs:
       - if: runner.os == 'Linux'
         run: |
           npm run lint
+          npm run web:build
           python3 tools/check-project.py
           python3 tools/check-package.py

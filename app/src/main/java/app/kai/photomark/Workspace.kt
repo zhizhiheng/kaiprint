@@ -178,19 +178,16 @@ class Workspace(application: Application) : AndroidViewModel(application) {
 
     private fun studioPhoto(): PhotoSource {
         val directory = File(app.filesDir, "studio").also { it.mkdirs() }
-        val photo = File(directory, "示例照片.jpg")
+        val photo = File(directory, "高地 · 示例照片.jpg")
         if (!photo.isFile) {
             val temporary = File.createTempFile("sample-", ".jpg", directory)
             try {
-                val bitmap = app.renderer.sample(Templates.blank)
-                try {
-                    temporary.outputStream().use { output ->
-                        if (!bitmap.compress(Bitmap.CompressFormat.JPEG, 95, output)) throw IOException("示例照片写入失败")
-                    }
-                } finally {
-                    bitmap.recycle()
-                }
+                val image = Uri.parse("android.resource://${app.packageName}/${R.drawable.studio_highlands}")
+                val stream = app.contentResolver.openInputStream(image) ?: throw IOException("示例照片无法读取")
+                stream.use { raw -> temporary.outputStream().use { output -> raw.copyTo(output) } }
                 ExifInterface(temporary).apply {
+                    setAttribute(ExifInterface.TAG_ARTIST, "Andrew Ridley")
+                    setAttribute(ExifInterface.TAG_IMAGE_DESCRIPTION, "KaiPrint layout sample. Camera and exposure values are illustrative.")
                     setAttribute(ExifInterface.TAG_MAKE, "NIKON CORPORATION")
                     setAttribute(ExifInterface.TAG_MODEL, "NIKON ZR")
                     setAttribute(ExifInterface.TAG_LENS_MODEL, "NIKKOR Z 24-70mm f/4 S")
@@ -297,13 +294,15 @@ class Workspace(application: Application) : AndroidViewModel(application) {
         clearSelection()
     }
 
-    fun begin(groups: List<PhotoGroup>, template: WatermarkTemplate = Templates.gallery) {
+    fun begin(groups: List<PhotoGroup>, template: WatermarkTemplate = Templates.gallery,
+              overrides: Map<String, Map<MetadataField, String>> = emptyMap(), libraryPreset: Boolean = true) {
         if (groups.isEmpty()) return
         editing = groups.distinctBy(PhotoGroup::id)
+        ProjectPhotoStore.remember(this, editing)
         activeIndex = 0
-        draft = EditDraft(template)
+        draft = EditDraft(template, overrides)
         presetWhenOpened.clear()
-        rememberPreset(template)
+        if (libraryPreset) rememberPreset(template)
         activeLayer = null
         undo.clear()
         redo.clear()
@@ -319,6 +318,7 @@ class Workspace(application: Application) : AndroidViewModel(application) {
                 prefs.getString("edit", null)?.let { storageJson.decodeFromString<SavedEdit>(it) }
             }.getOrNull() ?: return
             editing = saved.photos.map { PhotoGroup(it.photo, it.companion) }
+            ProjectPhotoStore.remember(this, editing)
             activeIndex = saved.active.coerceIn(0, maxOf(0, editing.lastIndex))
             draft = saved.draft.copy(template = Templates.upgradeLegacyZr(saved.draft.template))
             saved.savedPreset?.let(::rememberPreset)
@@ -330,6 +330,8 @@ class Workspace(application: Application) : AndroidViewModel(application) {
         activeIndex = index.coerceIn(0, maxOf(0, editing.lastIndex))
         saveSession()
     }
+
+    fun canUpdateLibraryPreset(id: String) = id in presetWhenOpened
 
     private fun rememberPreset(template: WatermarkTemplate) {
         if (template.id != Templates.blank.id && Templates.all.none { it.id == template.id }) {
@@ -586,21 +588,35 @@ class Workspace(application: Application) : AndroidViewModel(application) {
 
     fun importPreset(uri: Uri) {
         viewModelScope.launch {
-            capture("无法导入此预设包") {
-                val imported = withContext(Dispatchers.IO) {
-                    val archive = PresetArchive(app)
-                    val preset = archive.read(uri)
-                    // Once the files are installed, finish saving their owner or roll them back.
-                    withContext(NonCancellable) {
-                        try {
-                            val template = preset.template
+            capture("无法导入此 .kaiphoto 文件") {
+                val archive = PresetArchive(app)
+                var staged: ImportedPreset? = null
+                var adopted = false
+                val imported = try {
+                    // Capture installed resources even if returning from IO is interrupted.
+                    withContext(Dispatchers.IO) { staged = archive.read(uri) }
+                    val document = requireNotNull(staged)
+                    val photo = document.photo
+                    if (photo == null) {
+                        withContext(NonCancellable) {
+                            val template = document.template
                             dao.upsertPreset(PresetRow(template.id, template.title, storageJson.encodeToString(template), System.currentTimeMillis()))
-                        } catch (error: Exception) {
-                            archive.discard(preset)
-                            throw error
+                            adopted = true
                         }
+                    } else {
+                        begin(listOf(PhotoGroup(photo)), document.template, mapOf(photo.uri to document.overrides), libraryPreset = false)
+                        ProjectPhotoStore.adopted(requireNotNull(document.photoLease))
+                        adopted = true
+                        message = "已打开作品「${document.template.title}」"
+                        val keep = referencedSources()
+                        withContext(Dispatchers.IO) { ProjectPhotoStore.prune(app, keep) }
+                        return@capture
                     }
-                    preset
+                    document
+                } finally {
+                    if (!adopted) staged?.let { document ->
+                        withContext(NonCancellable + Dispatchers.IO) { archive.discard(document) }
+                    }
                 }
                 val template = imported.template
                 val missing = listOfNotNull(
@@ -610,6 +626,26 @@ class Workspace(application: Application) : AndroidViewModel(application) {
                 )
                 message = "已导入预设「${template.title}」" + if (missing.isEmpty()) "" else "，" + missing.joinToString("，")
                 screen = Screen.PRESETS
+            }
+        }
+    }
+
+    fun editableFileSnapshot(): EditableFileSnapshot? = current?.let { photo ->
+        EditableFileSnapshot(draft.template, photo.primary, draft.overrides[photo.id].orEmpty())
+    }
+
+    fun exportEditableFile(snapshot: EditableFileSnapshot, uri: Uri, includePhoto: Boolean) {
+        viewModelScope.launch {
+            capture("无法保存 .kaiphoto 文件，请检查可用空间及照片访问权限") {
+                withContext(Dispatchers.IO) {
+                    val archive = PresetArchive(app)
+                    if (includePhoto) archive.writeProject(snapshot, uri)
+                    else {
+                        val preview = app.renderer.sample(snapshot.template)
+                        try { archive.write(snapshot.template, uri, preview) } finally { preview.recycle() }
+                    }
+                }
+                message = if (includePhoto) "已保存含原照的作品" else "已保存纯模板"
             }
         }
     }
@@ -654,7 +690,7 @@ class Workspace(application: Application) : AndroidViewModel(application) {
     fun updatePreset(row: PresetRow) {
         val template = draft.template
         if (row.id != template.id || Templates.all.any { it.id == row.id } || row.id == Templates.blank.id) return
-        val opened = presetWhenOpened[row.id]
+        val opened = presetWhenOpened[row.id] ?: return
         val photos = editing
         viewModelScope.launch {
             capture("更新预设失败") {

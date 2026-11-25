@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "KaiPhoto v2 single-photo project manifest",
+  "type": "object",
+  "required": [
+    "format",
+    "formatVersion",
+    "kind",
+    "template",
+    "photo"
+  ],
+  "properties": {
+    "format": {
+      "const": "kaiphoto"
+    },
+    "formatVersion": {
+      "const": 2
+    },
+    "kind": {
+      "const": "project"
+    },
+    "template": {
+      "const": "template.json"
+    },
+    "photo": {
+      "type": "object",
+      "required": [
+        "path",
+        "mediaType",
+        "name",
+        "bytes",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "mediaType": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255,
+          "pattern": "^(?!\\.{1,2}$)[^/\\\\\\u0000-\\u001f\\u007f-\\u009f]+$"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 268435456
+        },
+        "sha256": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64,
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "path": {
+              "const": "photo/original.jpg"
+            },
+            "mediaType": {
+              "const": "image/jpeg"
+            }
+          }
+        },
+        {
+          "properties": {
+            "path": {
+              "const": "photo/original.png"
+            },
+            "mediaType": {
+              "const": "image/png"
+            }
+          }
+        },
+        {
+          "properties": {
+            "path": {
+              "const": "photo/original.webp"
+            },
+            "mediaType": {
+              "const": "image/webp"
+            }
+          }
+        },
+        {
+          "properties": {
+            "path": {
+              "const": "photo/original.nef"
+            },
+            "mediaType": {
+              "const": "image/x-nikon-nef"
+            }
+          }
+        }
+      ]
+    },
+    "overrides": {
+      "type": "object",
+      "maxProperties": 14,
+      "propertyNames": {
+        "$ref": "kaiphoto-template-v1.schema.json#/$defs/MetadataField"
+      },
+      "additionalProperties": {
+        "type": "string",
+        "maxLength": 120
+      },
+      "default": {}
+    }
+  }
+}

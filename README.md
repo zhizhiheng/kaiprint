@@ -4,7 +4,28 @@
 
 光印提供 Android 摄影水印工作台和可供 agent 调用的命令行工具。可在同一张照片上叠加署名、Logo、相机参数和边框，保存排版后批量导出。照片读取、渲染和预设管理均在设备上完成。Android 成片独立保存到 `Pictures/光印`。
 
-当前正式版为 **0.0.2**。下方 npm 安装命令和 Releases 中的 APK 对应该版本。**0.0.3 处于开发中**，本页的「自己设计水印」介绍源码版新增的创作和交换功能。[0.0.2 正式版](https://github.com/zhizhiheng/kaiprint/releases/tag/v0.0.2)
+当前正式版为 **0.0.2**。下方 npm 安装命令和 Releases 中的 APK 对应该版本。**0.0.3 处于开发中**，下方作品文件、Web 工作台和自由创作功能对应源码版。[0.0.2 正式版](https://github.com/zhizhiheng/kaiprint/releases/tag/v0.0.2)
+
+## 照片与模板一起编辑（0.0.3 开发版）
+
+在 Android 编辑器或 Web 工作台保存 `.kaiphoto` 时，可选两种内容。**仅模板**保存排版、可编辑图层、字体和 Logo，适合发给别人套在自己的照片上。**照片与模板**还保存当前原始照片和逐张手填信息。接收方可以重新打开作品，改署名、挪动标志，再导出成片。发送含原片的作品会一并发送其已有 EXIF，可能包含 GPS。
+
+作品包支持 JPEG、PNG、WebP 和尼康 NEF，单张原照最大 256 MiB。可下载「斯凯岛明信片」试用，里面包含 Andrew Ridley 的风景照片和四层可编辑排版。[打开 v2 示例作品](examples/projects/skye-postcard.kaiphoto?raw=true) · [文件结构与兼容说明](docs/preset-format.md) · [照片来源与 CC0 标注](https://commons.wikimedia.org/wiki/File:Quiraing,_Portree,_United_Kingdom_%28Unsplash_Kt5hRENuotI%29.jpg)
+
+### 启动本地 Web 工作台
+
+在仓库根目录执行下列命令，然后在浏览器打开终端显示的地址（默认 `http://127.0.0.1:4173`）。选照片、读 EXIF、处理作品包和导出成片都在浏览器本地完成。
+
+```sh
+npm ci
+npm run web
+```
+
+需要可离线分发的网页时，执行 `npm run web:build`。产物为 `build/kaiprint-web-studio.zip`，也可以直接从构建目录 `web/build/` 启动静态服务器。[离线使用与素材来源](web/README.md)
+
+[Web 工作台实测截图](docs/examples/studio/web-editor.webp) · [Android 编辑器实测截图](docs/examples/studio/android-editor.webp) · [Android 保存作品面板](docs/examples/studio/android-save.webp)
+
+设计稿位于独立 Figma 文件，包含 Web 和 Android 的创作与保存流程。[Web 编辑器](https://www.figma.com/design/1vu6uN2lTclFdof4f42U5N?node-id=1-4) · [Web 保存作品](https://www.figma.com/design/1vu6uN2lTclFdof4f42U5N?node-id=1-5) · [Android 编辑器](https://www.figma.com/design/1vu6uN2lTclFdof4f42U5N?node-id=1-6) · [Android 保存作品](https://www.figma.com/design/1vu6uN2lTclFdof4f42U5N?node-id=1-7)
 
 ## 自己设计水印（0.0.3 开发版）
 

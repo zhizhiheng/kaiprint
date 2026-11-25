@@ -11,12 +11,13 @@ const help = `KaiPrint · 光印
   kaiprint metadata edit 照片 --set iso=400 [--unset copyright] [-o 副本 | --in-place] [--dry-run | --confirm | --yes]
   kaiprint skill [--install 技能父目录] [--json]
   kaiprint-mcp --root 照片目录
-  kaiprint preset pack template.json -o 文件.kaiphoto [--assets 素材目录] [--preview 预览.jpg] [--json]
+  kaiprint preset pack template.json -o 文件.kaiphoto [--assets 素材目录] [--preview 预览.jpg] [--photo 原照 [--overrides 字段.json]] [--json]
   kaiprint preset inspect 文件.kaiphoto [--json]
   kaiprint templates [--json]
   kaiprint inspect 照片... [选项] [--json]
   kaiprint render 照片... [选项] [--dry-run | --confirm | --yes] [--json]
 
+  --photo 原照            作品包含一张原始照片及其元数据（可能含 GPS），支持 JPEG、PNG、WebP、NEF
   -o, --output 路径       单张成片，可由 .jpg/.png/.webp 推断格式
   --out-dir 目录          批量成片目录，默认与源文件同目录
   -t, --template 名称     gallery、brand-stamp、frosted-gallery
@@ -41,6 +42,8 @@ const help = `KaiPrint · 光印
 const opts = {
   help: { type: "boolean", short: "h" },
   assets: { type: "string" },
+  photo: { type: "string" },
+  overrides: { type: "string" },
   preview: { type: "string" },
   tag: { type: "string", multiple: true },
   unset: { type: "string", multiple: true },
@@ -105,12 +108,19 @@ try {
       result(data, data.directory);
     } else if (
       Object.keys(v).some((k) =>
-        ["tag", "unset", "in-place", "install", "assets", "preview"].includes(
-          k,
-        ),
+        [
+          "tag",
+          "unset",
+          "in-place",
+          "install",
+          "assets",
+          "preview",
+          "photo",
+          "overrides",
+        ].includes(k),
       )
     )
-      usage("该选项需要 metadata 或 skill 命令");
+      usage("该选项需要对应的 metadata、skill 或 preset 命令");
     else if (command === "templates") {
       if (files.length) usage("templates 不接收输入文件");
       result(

@@ -22,9 +22,20 @@ node cli/kaiprint.js preset inspect my-travel.kaiphoto --json
 
 `pack` 接受原生模板 JSON，按 v1 Schema 校验。图层引用自定义 PNG 或字体时，默认从模板旁的 `assets/` 目录读取，也可用 `--assets 目录` 指定路径。包只收录引用到的素材。`--preview cover.jpg` 可附上 JPEG 预览。输出路径须以 `.kaiphoto` 结尾，请为每次新导出指定空闲文件名。[模板字段与限制](preset-format.md) · [JSON Schema](../formats/kaiphoto-template-v1.schema.json)
 
-`inspect` 接受 `.kaiphoto` 和旧版光印 ZIP。加 `--json` 可取到 `format`（`kaiphoto-v1` 或 `legacy-zip`）、`title`、`id`、`layerCount`、`assets`、`missingAssets` 和 `hasPreview`。例如代理可以先检查 `missingAssets`，再把完整的包交给摄影师。
+`inspect` 接受 `.kaiphoto` 和旧版光印 ZIP。加 `--json` 可取到 `format`（`kaiphoto-v2`、`kaiphoto-v1` 或 `legacy-zip`）、`title`、`id`、`layerCount`、`assets`、`missingAssets` 和 `hasPreview`。例如代理可以先检查 `missingAssets`，再把完整的包交给摄影师。
 
-要用这份文件出图，在 Android 开发版的「预设 → 导入模板」选中它，再选照片套用。CLI 和 MCP 的 `render` 目前接受下文的三个内置排版标识。
+要用这份文件出图，可在 Android 开发版的「预设 → 导入模板」选中它，或在 Web 工作台中打开文件，再选照片套用。CLI 和 MCP 的 `render` 目前接受下文的三个内置排版标识。
+
+### 把原始照片和排版一起交接
+
+`--photo` 让 `preset pack` 输出一份 v2 作品。原文件按字节嵌入，原有 EXIF 与 GPS 也会随文件交给接收方。可选的 `--overrides` 指向一份 UTF-8 JSON 文件，例如 `{"AUTHOR":"林凯","ISO":""}`。空字符串隐藏该字段。
+
+```sh
+node cli/kaiprint.js preset pack examples/presets/travel-notebook.json --photo DSC_0123.NEF --overrides fields.json -o 我的作品.kaiphoto --json
+node cli/kaiprint.js preset inspect 我的作品.kaiphoto --json
+```
+
+成功时 `inspect` 返回 `kind: "project"`、原照片名称、字节数、SHA-256 与手填字段。未传 `--photo` 时生成可跨照片使用的 v1 模板。[两种文件的兼容说明](preset-format.md) · [可直接打开的 v2 样例](../examples/projects/skye-postcard.kaiphoto)
 
 ## 读取原始拍摄信息
 

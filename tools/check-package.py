@@ -23,8 +23,9 @@ def main():
         expected.update(p.relative_to(ROOT).as_posix() for p in (ROOT / "app/src/main/assets/brands").glob("*.svg"))
         expected.update(p.relative_to(ROOT).as_posix() for p in (ROOT / "cli").glob("*.js"))
         expected.update(p.relative_to(ROOT).as_posix() for p in (ROOT / "examples/presets").glob("*") if p.is_file())
+        expected.update(p.relative_to(ROOT).as_posix() for p in (ROOT / "examples/projects").glob("*.kaiphoto"))
         expected.update(["package.json", "LICENSE", "README.md", "cli/models.json", "docs/cli.md",
-                         "formats/kaiphoto-template-v1.schema.json", "docs/preset-format.md",
+                         "formats/kaiphoto-template-v1.schema.json", "formats/kaiphoto-project-v2.schema.json", "docs/preset-format.md",
                          "docs/brand-marks.md", "docs/agents.md", "server.json", "skills/kaiprint/SKILL.md", "model-marks/catalog.csv", "app/src/main/assets/places/cities.tsv"])
         with tarfile.open(tarball, "r:gz") as archive:
             files = {m.name.removeprefix("package/") for m in archive if m.isfile()}
@@ -57,6 +58,9 @@ sharp({create:{width:180,height:120,channels:3,background:"#315444"}})
         package = invoke("preset", "pack", str(examples / "travel-notebook.json"), "-o", "trial.kaiphoto")
         assert package["format"] == "kaiphoto-v1"
         assert invoke("preset", "inspect", "trial.kaiphoto") == invoke("preset", "inspect", str(examples / "travel-notebook.kaiphoto"))
+        project = invoke("preset", "pack", str(examples / "travel-notebook.json"), "--photo", "test.jpg", "-o", "trial-project.kaiphoto")
+        assert project["kind"] == "project" and project["photo"]["bytes"] == (stage / "test.jpg").stat().st_size
+        assert invoke("preset", "inspect", "trial-project.kaiphoto")["photo"] == project["photo"]
         installed = invoke("skill", "--install", str(stage / "skills"))
         assert (Path(installed["directory"]) / "SKILL.md").is_file()
         assert subprocess.check_output([str(cli), "mcp", "--version"], cwd=stage, text=True).strip() == packed["version"]

@@ -1,8 +1,8 @@
-# KaiPhoto 水印模板格式
+# KaiPhoto 模板与作品格式
 
-`.kaiphoto` 是光印从 **0.0.3 开发版**开始使用的模板文件。一个文件保存可编辑的水印图层、边框、字段和自定义素材。Android 可导入、修改并导出。命令行可将手写 JSON 打包，也可检查别人发来的预设。[下载「旅途手记」](../examples/presets/travel-notebook.kaiphoto?raw=true) · [同一模板的 JSON](../examples/presets/travel-notebook.json) · [CLI 用法](cli.md#在电脑上制作-kaiphoto)
+.kaiphoto 有两种用途。分享通用排版时选**仅模板**，接收方用自己的照片继续设计。交接一张已经排好的照片时选**照片与模板**，接收方能从相同的原片、图层和手填参数继续改。若只供观看，从编辑器导出 JPEG 成片即可。以下能力对应 0.0.3 开发版。[下载「旅途手记」](../examples/presets/travel-notebook.kaiphoto?raw=true) · [同一模板的 JSON](../examples/presets/travel-notebook.json) · [CLI 用法](cli.md#在电脑上制作-kaiphoto)
 
-## 文件结构
+## v1 通用模板
 
 容器是 ZIP。扩展名为 `.kaiphoto`，MIME 类型为 `application/vnd.kaiprint.kaiphoto+zip`。包根目录的 `manifest.json` 用下面三个字段标识 v1 格式。`formatVersion` 是容器版本，`template.json` 内的 `version` 是布局版本，两者都独立于 App 版本号。
 
@@ -21,12 +21,50 @@
 
 v1 包最多 51 个文件，解包后总大小不超过 48 MiB。单个素材、预览或 `README.md` 最大 16 MiB。文件名主体由 1 至 80 个英文字母、数字、`-`、`_` 组成，扩展名用小写。图层的 `logoFile` 和 `fontFile` 只填文件名。重复条目、单独的目录条目、清单以外的未知路径或未被图层引用的素材会导致导入失败。
 
+## v2 单照片作品
+
+作品沿用 ZIP 容器、`.kaiphoto` 扩展名、MIME 和 v1 的布局结构。原照独立存放，保存时保留原始字节、方向、色彩配置及照片本身已有的 EXIF。摄影师修改的署名、机型等文字写入作品清单，原片不会因此重写。在 Android 上，若照片提供方只允许读取已隐藏定位的副本，作品中保存的是该授权副本的实际字节。每份作品只收录当前照片，批量编辑时其他照片不随包发送。[下载斯凯岛明信片作品](../examples/projects/skye-postcard.kaiphoto?raw=true) · [作品清单 JSON Schema](../formats/kaiphoto-project-v2.schema.json)
+
+以下是示例作品的实际清单。
+
+```json
+{
+  "format": "kaiphoto",
+  "formatVersion": 2,
+  "kind": "project",
+  "template": "template.json",
+  "photo": {
+    "path": "photo/original.jpg",
+    "name": "isle-of-skye.jpg",
+    "mediaType": "image/jpeg",
+    "bytes": 208440,
+    "sha256": "79dd66987775c93977b93f9aeaefddfa9ebb3a58e2ac77937a353bd7264bfa37"
+  },
+  "overrides": {
+    "TITLE": "斯凯岛的山脊",
+    "AUTHOR": "Andrew Ridley",
+    "LOCATION": "Isle of Skye"
+  }
+}
+```
+
+| 作品内容 | 保存及读取约定 |
+| --- | --- |
+| 原始照片 | 支持 JPEG、PNG、WebP、尼康 NEF，对应固定路径 `photo/original.jpg`、`.png`、`.webp`、`.nef`，媒体类型依次为 `image/jpeg`、`image/png`、`image/webp`、`image/x-nikon-nef`。每份作品包含一张 1 字节至 256 MiB 的原片。 |
+| 文件身份 | 通过实际内容、长度和小写 SHA-256 核对原照。摘要用于检查文件完整性。展示名限 1 至 255 个 Unicode 码点，不含路径分隔符或控制字符。 |
+| 手填字段 | `overrides` 可省略。键使用模板支持的 14 个元数据字段，如 `AUTHOR`、`LOCATION`、`ISO`。每项最多 120 个 Unicode 码点。省略字段沿用照片和模板的值，显式空字符串表示这张照片不显示该字段。 |
+| 布局和素材 | 必需的 `template.json` 仍为布局 v1，保留文字、图层顺序和动态绑定。作品须携带引用的 PNG 标志和字体。可选 `preview.jpg` 用于预览，完整原照始终按清单路径读取。 |
+| 容器限制 | v2 清单最大 16 KiB，全部条目最多 52 个。除原照外的文件展开后合计最多 48 MiB。布局、素材和预览沿用上文单项限额。读取器应拒绝未知主版本、重复或不匹配条目、缺失资源以及长度或摘要不符的原照。 |
+
+发送作品会同时发送原片中已有的个人信息，可能包括拍摄地点。只分享版式时请选择「仅模板」。仅支持 v1 的旧阅读器需要接收一份单独导出的模板。浏览器对 NEF 的像素解码取决于运行环境；可以保留 NEF 原片进行文件交换，在具备解码能力的设备上预览出图。
+
 ## Android 可以导入哪些设计
 
-在「预设 → 导入模板」选择文件。光印按内容识别格式，每次导入都会在「我的预设」新建副本，保留原设计。要把转换后的结果发给别人，再从作品菜单导出 `.kaiphoto`。
+在「预设 → 导入模板」选择文件。光印按内容识别格式，导入模板会在「我的预设」新建副本。打开 v2 作品会载入内含照片及图层，直接进入编辑器。要把转换后的结果发给别人，再从作品菜单导出 `.kaiphoto`。
 
 | 来源 | 导入后可以怎样编辑 |
 | --- | --- |
+| `.kaiphoto` v2 作品 | 恢复当前原片、模板和逐张手填字段，可继续保存或导出成片。 |
 | `.kaiphoto` v1 | 保留原生边框、图层顺序、字段、位置、字体与标志引用。接收到带光印 MIME 的文件时，也可从文件管理器「打开方式」进入。 |
 | 0.0.2 及更早版本的光印预设 ZIP | 包根目录有 `template.json`，旧包无需 `manifest.json`，最多 50 个文件。导入后按新版格式导出即可迁移。正式版 0.0.2 使用这种旧包。 |
 | 光印 JSON | 单个模板对象可直接导入。需要携带自定义 Logo 和字体时，先用 CLI 打成 `.kaiphoto`。 |
@@ -35,7 +73,7 @@ v1 包最多 51 个文件，解包后总大小不超过 48 MiB。单个素材、
 
 PSD、OpenRaster、darktable 动态变量与 Canva 云端设计的路线和取舍，见[格式互换研究](../reports/0.0.3-template-studio.md)。
 
-## 在电脑上修改已有的 .kaiphoto
+## 在电脑上修改已有模板
 
 可用支持 ZIP 的归档工具打开文件，在空目录中取出 `template.json` 和随包的 `assets/`。修改 JSON 中的署名、图层或位置，再执行 `kaiprint preset pack template.json -o 我的排版.kaiphoto`。原包包含 `preview.jpg` 时，可以用 `--preview preview.jpg` 带回预览。若排版已经改变，Android 可在下次导出时为新排版生成预览。[CLI 完整示例](cli.md#在电脑上制作-kaiphoto)
 

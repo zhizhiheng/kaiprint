@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -37,10 +38,13 @@ import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
@@ -56,6 +60,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -85,12 +90,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -103,14 +110,16 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-internal val Ink = Color(0xFFF5F1EB)
-internal val Muted = Color(0xFFB3B6C1)
-internal val Ground = Color(0xFF101115)
-internal val Panel = Color(0xFF1A1C23)
-internal val Raised = Color(0xFF262831)
-internal val Stroke = Color(0xFF3A3C47)
-internal val Gold = Color(0xFFF4CE82)
-internal val GoldDark = Color(0xFF2D210B)
+internal val Ink = Color(0xFFF5F1E9)
+internal val Muted = Color(0xFFB0B6AE)
+internal val Ground = Color(0xFF161918)
+internal val Panel = Color(0xFF202421)
+internal val Raised = Color(0xFF29302B)
+internal val Stroke = Color(0xFF3B433C)
+internal val Gold = Color(0xFFD9B979)
+internal val GoldDark = Color(0xFF302616)
+internal val Sage = Color(0xFF91A895)
+internal val Darkroom = Color(0xFF101311)
 internal val Danger = Color(0xFFFFA396)
 
 class MainActivity : ComponentActivity() {
@@ -128,8 +137,8 @@ class MainActivity : ComponentActivity() {
             MaterialTheme(colorScheme = darkColorScheme(
                 primary = Gold, onPrimary = GoldDark,
                 primaryContainer = Color(0xFF3C301B), onPrimaryContainer = Gold,
-                secondary = Color(0xFFD1C4AA), onSecondary = GoldDark,
-                secondaryContainer = Color(0xFF312B23), onSecondaryContainer = Gold,
+                secondary = Sage, onSecondary = Color(0xFF18251C),
+                secondaryContainer = Color(0xFF354338), onSecondaryContainer = Color(0xFFE4EFE2),
                 background = Ground, onBackground = Ink, surface = Panel, onSurface = Ink,
                 surfaceVariant = Raised, onSurfaceVariant = Muted, outline = Stroke,
                 outlineVariant = Stroke, error = Danger,
@@ -213,6 +222,22 @@ private fun PhotoMark(workspace: Workspace) {
         if (uri != null) presetToExport?.let { workspace.exportPreset(it, uri) }
         presetToExport = null
     }
+    var editableToSave by rememberSaveable { mutableStateOf<String?>(null) }
+    var embedPhoto by rememberSaveable { mutableStateOf(false) }
+    val editableExport = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument(PresetArchive.MIME)) { uri ->
+        val encoded = editableToSave
+        editableToSave = null
+        if (uri != null && encoded != null) {
+            workspace.exportEditableFile(storageJson.decodeFromString<EditableFileSnapshot>(encoded), uri, embedPhoto)
+        }
+    }
+    fun saveEditable(snapshot: EditableFileSnapshot, includePhoto: Boolean) {
+        editableToSave = storageJson.encodeToString(snapshot)
+        embedPhoto = includePhoto
+        val title = if (includePhoto) snapshot.photo.stem else snapshot.template.title
+        val stem = title.substringAfterLast('/').substringAfterLast('\\').trim().take(65).ifBlank { "光印" }
+        editableExport.launch("$stem.kaiphoto")
+    }
     val notification = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
     val mediaLocation = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) workspace.locationGranted()
@@ -271,13 +296,13 @@ private fun PhotoMark(workspace: Workspace) {
             when (workspace.screen) {
                 Screen.LIBRARY -> LibraryScreen(workspace, ::browse,
                     { pick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
-                    { files.launch(arrayOf("*/*")) }, { folder.launch(null) })
+                    { files.launch(arrayOf("*/*")) }, { folder.launch(null) }, { presetImport.launch(arrayOf("*/*")) })
                 Screen.EDITOR -> EditorScreen(workspace, { logo.launch(arrayOf("image/*")) }, { font.launch(arrayOf("*/*")) }, {
                     // Device library photos hide their GPS until the app may read media locations.
                     if (BuildConfig.FLAVOR == "library" && !workspace.app.photos.locationAccess) {
                         mediaLocation.launch(Manifest.permission.ACCESS_MEDIA_LOCATION)
                     }
-                }) { settings, all ->
+                }, ::saveEditable) { settings, all ->
                     workspace.enqueue(settings, all)
                     if (Build.VERSION.SDK_INT >= 33 &&
                         context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED
@@ -300,8 +325,8 @@ internal fun AppHeading(title: String, subtitle: String? = null, trailing: @Comp
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Column(Modifier.weight(1f)) {
-            Text(title, fontWeight = FontWeight.SemiBold, fontSize = 27.sp, color = Ink)
-            if (subtitle != null) Text(subtitle, style = MaterialTheme.typography.bodySmall, color = Muted)
+            Text(title, fontWeight = FontWeight.Medium, fontFamily = FontFamily.Serif, fontSize = 28.sp, color = Ink)
+            if (subtitle != null) Text(subtitle, style = MaterialTheme.typography.labelSmall, color = Sage)
         }
         trailing()
     }
@@ -309,7 +334,7 @@ internal fun AppHeading(title: String, subtitle: String? = null, trailing: @Comp
 
 @Composable
 private fun LibraryScreen(
-    workspace: Workspace, browse: () -> Unit, pick: () -> Unit, files: () -> Unit, folder: () -> Unit,
+    workspace: Workspace, browse: () -> Unit, pick: () -> Unit, files: () -> Unit, folder: () -> Unit, openArchive: () -> Unit,
 ) {
     var more by remember { mutableStateOf(false) }
     var album by remember { mutableStateOf<String?>(null) }
@@ -323,7 +348,7 @@ private fun LibraryScreen(
     }
 
     Column(Modifier.fillMaxSize()) {
-        AppHeading("光印", if (workspace.access == LibraryAccess.PARTIAL) "已授权的照片" else null) {
+        AppHeading("光印", if (workspace.access == LibraryAccess.PARTIAL) "已授权的照片 · ${gallery.size} 张" else "KaiPrint Studio") {
             if (workspace.hasDraft) TextButton(workspace::reopen) { Text("继续编辑") }
             Box {
                 IconButton(onClick = { more = true }) { Icon(Icons.Default.Add, "导入选项", tint = Gold) }
@@ -331,6 +356,7 @@ private fun LibraryScreen(
                     DropdownMenuItem(text = { Text("从系统相册选取") }, onClick = { more = false; pick() })
                     DropdownMenuItem(text = { Text("导入文件（含 RAW）") }, onClick = { more = false; files() })
                     DropdownMenuItem(text = { Text("导入文件夹") }, onClick = { more = false; folder() })
+                    DropdownMenuItem(text = { Text("打开 .kaiphoto") }, onClick = { more = false; openArchive() })
                     if (BuildConfig.FLAVOR == "library") {
                         DropdownMenuItem(text = { Text("管理相册权限") }, onClick = { more = false; browse() })
                         DropdownMenuItem(text = { Text("刷新相册") }, onClick = { more = false; workspace.refreshLibrary() })
@@ -339,22 +365,37 @@ private fun LibraryScreen(
             }
         }
         if (gallery.isEmpty() && !workspace.loading) {
-            Box(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 26.dp), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                    Image(painterResource(R.drawable.kaiprint_mark), null,
-                        Modifier.size(80.dp).clip(RoundedCornerShape(24.dp)))
-                    Text("先选几张照片", color = Ink, style = MaterialTheme.typography.headlineSmall)
-                    Text("为一张照片调好样式，再用于整组。", color = Muted, style = MaterialTheme.typography.bodyMedium)
-                    Button(onClick = pick, contentPadding = PaddingValues(horizontal = 27.dp, vertical = 13.dp)) {
-                        Text("从相册选照片")
+            Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                Surface(onClick = { workspace.openSampleDesign(Templates.gallery) }, color = Panel,
+                    modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp)) {
+                    Box(Modifier.fillMaxWidth().heightIn(max = 250.dp).aspectRatio(1.56f)) {
+                        Image(painterResource(R.drawable.studio_highlands), "苏格兰高地示例照片",
+                            Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent,
+                            Color.Black.copy(alpha = .72f)))))
+                        Column(Modifier.align(Alignment.BottomStart).padding(18.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                            Text("试用示例照片", color = Ink, fontSize = 21.sp, fontWeight = FontWeight.Medium)
+                            Text("Quiraing  /  Andrew Ridley", color = Ink.copy(alpha = .84f),
+                                fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+                        }
+                        Icon(Icons.AutoMirrored.Filled.ArrowForward, null, tint = Ink,
+                            modifier = Modifier.align(Alignment.BottomEnd).padding(18.dp))
                     }
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        TextButton(onClick = files) { Text("导入文件") }
-                        TextButton(onClick = folder) { Text("导入文件夹") }
-                    }
-                    if (BuildConfig.FLAVOR == "library" && workspace.access != LibraryAccess.FULL) {
-                        OutlinedButton(onClick = browse) { Text("启用应用内相册") }
-                    }
+                }
+                Text("照片工作台", style = MaterialTheme.typography.titleLarge, color = Ink,
+                    modifier = Modifier.padding(top = 5.dp), fontWeight = FontWeight.SemiBold)
+                Button(onClick = pick, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(10.dp),
+                    contentPadding = PaddingValues(14.dp)) { Text("从相册选照片") }
+                OutlinedButton(onClick = openArchive, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(10.dp),
+                    contentPadding = PaddingValues(13.dp)) { Text("打开 .kaiphoto") }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                    TextButton(onClick = files) { Text("导入文件") }
+                    TextButton(onClick = folder) { Text("导入文件夹") }
+                }
+                if (BuildConfig.FLAVOR == "library" && workspace.access != LibraryAccess.FULL) {
+                    HorizontalDivider(color = Stroke)
+                    TextButton(onClick = browse) { Text("启用应用内相册", color = Sage) }
                 }
             }
         } else {
@@ -484,7 +525,7 @@ private fun PresetScreen(workspace: Workspace, openDesign: (WatermarkTemplate) -
     }
     var delete by remember { mutableStateOf<PresetRow?>(null) }
     Column(Modifier.fillMaxSize()) {
-        AppHeading("水印预设", ".kaiphoto · ZIP · JSON · SVG") { TextButton(importArchive) { Text("导入模板") } }
+        AppHeading("水印预设", "内置 ${Templates.all.size} 款  ·  个人 ${presets.size} 款") { TextButton(importArchive) { Text("导入模板") } }
         LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             item {
                 OutlinedButton(onClick = { openDesign(Templates.blank) }, modifier = Modifier.fillMaxWidth()) {

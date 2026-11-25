@@ -17,6 +17,7 @@ import path from "node:path";
 import sharp from "sharp";
 import exifr from "exifr";
 import { camera, logoFor, placeName } from "../catalog.js";
+import { parseCities, locateCity, cityLabel, coordinates } from "../places.js";
 const bin = fileURLToPath(new URL("../kaiprint.js", import.meta.url));
 async function run(args, answer = "") {
   const child = spawn(process.execPath, [bin, ...args, "--json"], {
@@ -119,6 +120,16 @@ test("plan uses oriented dimensions, original EXIF and offline location", async 
   assert.equal(p.logo, "models/nikon/zr.svg");
   assert.deepEqual(await readdir(dir), [path.basename(input)]);
   assert.equal(await placeName({ latitude: -42, longitude: -135 }, "city"), "");
+});
+test("offline place labels follow the selected country and coordinate format", () => {
+  const cities = parseCities(
+    "# sample\n312304\t1214737\tCN\t10000000\t1\t上海\tShanghai\n",
+  );
+  const match = locateCity(cities, 31.2304, 121.4737);
+  assert.equal(cityLabel(match), "上海");
+  assert.equal(cityLabel(match, true), "上海 · 中国");
+  assert.equal(cityLabel(locateCity(cities, -42, -135), true), "");
+  assert.equal(coordinates(-33.8688, 151.2093), "33.87°S 151.21°E");
 });
 test("actual gallery, overlay and glass files match plans, strip GPS and preserve source", async (t) => {
   const { dir, input } = await fixture(t);

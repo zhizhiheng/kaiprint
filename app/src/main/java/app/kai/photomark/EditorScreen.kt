@@ -2,6 +2,7 @@ package app.kai.photomark
 
 import android.graphics.Bitmap
 import android.os.Build
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -20,6 +21,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -29,10 +31,13 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -50,6 +55,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
@@ -66,6 +72,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -81,6 +88,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -98,19 +106,20 @@ private enum class EditorPanel(val label: String) {
 @Composable
 fun EditorScreen(
     workspace: Workspace, importLogo: () -> Unit, importFont: () -> Unit, requestLocation: () -> Unit,
-    export: (ExportSettings, Boolean) -> Unit,
+    saveEditable: (EditableFileSnapshot, Boolean) -> Unit, export: (ExportSettings, Boolean) -> Unit,
 ) {
     val group = workspace.current ?: return
-    var panel by remember {
+    var panel by rememberSaveable {
         mutableStateOf(if (workspace.draft.template.id == Templates.blank.id) EditorPanel.LAYERS else EditorPanel.TEMPLATES)
     }
-    var saving by remember { mutableStateOf(false) }
+    var saving by rememberSaveable { mutableStateOf(false) }
+    var choosingFile by rememberSaveable { mutableStateOf(false) }
     var exporting by remember { mutableStateOf(false) }
     var moving by remember { mutableStateOf(false) }
     var drag by remember(group.id, workspace.activeLayer) { mutableStateOf(Offset.Zero) }
     val draft = workspace.draft
     val presets by workspace.presets.collectAsState()
-    val savedPreset = presets.firstOrNull { it.id == draft.template.id }
+    val savedPreset = presets.firstOrNull { it.id == draft.template.id && workspace.canUpdateLibraryPreset(it.id) }
     val saveActions: @Composable () -> Unit = {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
             if (savedPreset != null) TextButton({ workspace.updatePreset(savedPreset) }) { Text("更新此预设") }
@@ -166,83 +175,125 @@ fun EditorScreen(
         if (layer == null || panel != EditorPanel.LAYERS) moving = false
     }
 
-    Column(Modifier.fillMaxSize()) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton({ workspace.screen = Screen.LIBRARY }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回相册") }
-            Column(Modifier.weight(1f)) {
-                Text("编辑水印", fontSize = 19.sp, fontWeight = FontWeight.SemiBold)
-                Text(group.primary.name, fontSize = 11.sp, color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-            TextButton(workspace::undo, enabled = workspace.canUndo) { Text("撤销") }
-            TextButton(workspace::redo, enabled = workspace.canRedo) { Text("重做") }
-            Button({ exporting = true }, enabled = pixels != null && source != null,
-                modifier = Modifier.padding(end = 8.dp)) { Text("导出") }
-        }
-        PreviewStage(
-            source = source, preview = preview, layout = layout,
-            loading = infoResult == null || (pixels != null && sourceResult == null),
-            failure = if (sourceResult?.isFailure == true) "此来源暂时无法解码" else "没有可用的照片预览",
-            layer = if (moving) layer else null,
-            modifier = Modifier.fillMaxWidth().weight(1f),
-            onMove = { drag = it },
-            onMoveFinished = {
-                if (layer != null && drag != Offset.Zero) workspace.layer(layer.copy(
-                    x = (layer.x + drag.x).coerceIn(-.95f, .95f),
-                    y = (layer.y + drag.y).coerceIn(-.95f, .95f),
-                ))
-                drag = Offset.Zero
-            },
-            onMoveCancelled = { drag = Offset.Zero },
-        )
-        if (workspace.editing.size > 1) {
-            LazyRow(contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 15.dp, vertical = 5.dp),
-                horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                items(workspace.editing, key = PhotoGroup::id) { photo ->
-                    val current = photo.id == group.id
-                    val index = workspace.editing.indexOf(photo)
-                    Thumbnail(workspace, photo, Modifier.size(46.dp, 34.dp).clip(RoundedCornerShape(6.dp)).then(
-                        if (current) Modifier.border(2.dp, Gold, RoundedCornerShape(6.dp)) else Modifier
-                    ).clickable(role = Role.Button, onClickLabel = "查看第 ${index + 1} 张") { workspace.changePhoto(index) })
+    val canvas: @Composable (Modifier) -> Unit = { modifier ->
+        Column(modifier.background(Darkroom)) {
+            PreviewStage(
+                source = source, preview = preview, layout = layout,
+                loading = infoResult == null || (pixels != null && sourceResult == null),
+                failure = if (sourceResult?.isFailure == true) "此来源暂时无法解码" else "没有可用的照片预览",
+                layer = if (moving) layer else null,
+                modifier = Modifier.fillMaxWidth().weight(1f),
+                onMove = { drag = it },
+                onMoveFinished = {
+                    if (layer != null && drag != Offset.Zero) workspace.layer(layer.copy(
+                        x = (layer.x + drag.x).coerceIn(-.95f, .95f),
+                        y = (layer.y + drag.y).coerceIn(-.95f, .95f),
+                    ))
+                    drag = Offset.Zero
+                },
+                onMoveCancelled = { drag = Offset.Zero },
+            )
+            if (workspace.editing.size > 1) {
+                LazyRow(contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 15.dp, vertical = 5.dp),
+                    horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    itemsIndexed(workspace.editing, key = { _, photo -> photo.id }) { index, photo ->
+                        val current = photo.id == group.id
+                        Thumbnail(workspace, photo, Modifier.size(46.dp, 34.dp).clip(RoundedCornerShape(6.dp)).then(
+                            if (current) Modifier.border(2.dp, Gold, RoundedCornerShape(6.dp)) else Modifier
+                        ).clickable(role = Role.Button, onClickLabel = "查看第 ${index + 1} 张") { workspace.changePhoto(index) })
+                    }
                 }
             }
+            Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 6.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                val dimensions = layout?.canvas?.let { "${it.width} × ${it.height}" } ?: group.label
+                Text(if (group.primary.folder == "创作示例") "$dimensions  ·  示例参数" else dimensions,
+                    modifier = Modifier.weight(1f), color = Sage, fontFamily = FontFamily.Monospace,
+                    fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                TextButton(workspace::undo, enabled = workspace.canUndo) { Text("撤销") }
+                TextButton(workspace::redo, enabled = workspace.canRedo) { Text("重做") }
+            }
         }
-        val panelFraction = if (panel == EditorPanel.TEMPLATES) .40f else .46f
-        Surface(color = Panel, modifier = Modifier.fillMaxWidth().fillMaxHeight(panelFraction),
-            shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)) {
-            Column(Modifier.fillMaxSize()) {
-                Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 3.dp),
-                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    EditorPanel.entries.forEach { item ->
-                        TextButton({ panel = item }, modifier = Modifier.weight(1f)) {
-                            Text(item.label, color = if (item == panel) Gold else Muted,
-                                fontWeight = if (item == panel) FontWeight.Bold else FontWeight.Medium, maxLines = 1)
+    }
+    val inspector: @Composable (Modifier) -> Unit = { modifier ->
+        Surface(color = Panel, modifier = modifier) {
+            Column {
+                Row(Modifier.fillMaxWidth().selectableGroup().padding(horizontal = 8.dp)) {
+                    for (item in EditorPanel.entries) {
+                        val selected = item == panel
+                        Box(Modifier.weight(1f).heightIn(min = 48.dp)
+                            .selectable(selected, role = Role.Tab) { panel = item }, contentAlignment = Alignment.Center) {
+                            Text(item.label, color = if (selected) Ink else Muted,
+                                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal)
+                            if (selected) Box(Modifier.align(Alignment.BottomCenter).size(24.dp, 2.dp)
+                                .background(Gold, RoundedCornerShape(1.dp)))
                         }
                     }
                 }
                 HorizontalDivider(color = Stroke)
-                Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())
-                    .padding(horizontal = 16.dp, vertical = 9.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    when (panel) {
-                        EditorPanel.TEMPLATES -> {
-                            TemplatePanel(workspace, source, pixels, info?.metadata, override, presets) {
-                                workspace.apply(Templates.blank)
-                                panel = EditorPanel.LAYERS
+                key(panel) {
+                    Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())
+                        .padding(horizontal = 16.dp, vertical = 9.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        when (panel) {
+                            EditorPanel.TEMPLATES -> {
+                                TemplatePanel(workspace, source, pixels, info?.metadata, override, presets) {
+                                    workspace.apply(Templates.blank)
+                                    panel = EditorPanel.LAYERS
+                                }
+                                saveActions()
                             }
-                            saveActions()
+                            EditorPanel.LAYERS -> {
+                                saveActions()
+                                LayersPanel(workspace, layer, moving, { moving = it }, importLogo, importFont,
+                                    info?.metadata ?: PhotoMetadata(), override)
+                            }
+                            EditorPanel.FRAME -> FramePanel(workspace, source)
+                            EditorPanel.METADATA -> MetadataPanel(workspace, group, info, pixels, requestLocation)
                         }
-                        EditorPanel.LAYERS -> {
-                            saveActions()
-                            LayersPanel(workspace, layer, moving, { moving = it }, importLogo, importFont,
-                                info?.metadata ?: PhotoMetadata(), override)
-                        }
-                        EditorPanel.FRAME -> FramePanel(workspace, source)
-                        EditorPanel.METADATA -> MetadataPanel(workspace, group, info, pixels, requestLocation)
                     }
                 }
             }
         }
     }
 
+    Column(Modifier.fillMaxSize()) {
+        Row(Modifier.fillMaxWidth().padding(start = 2.dp, end = 12.dp, top = 4.dp, bottom = 4.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            IconButton({ workspace.screen = Screen.LIBRARY }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回相册") }
+            Column(Modifier.weight(1f)) {
+                Text("编辑水印", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                Text(group.primary.name, fontSize = 11.sp, color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            OutlinedButton({ choosingFile = true }, shape = RoundedCornerShape(9.dp),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)) { Text("保存文件") }
+            Button({ exporting = true }, enabled = pixels != null && source != null, shape = RoundedCornerShape(9.dp),
+                contentPadding = PaddingValues(horizontal = 15.dp, vertical = 8.dp)) { Text("导出") }
+        }
+        HorizontalDivider(color = Stroke)
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+            if (maxWidth >= 720.dp || (maxWidth >= 600.dp && maxHeight < 460.dp)) {
+                val inspectorWidth = (maxWidth * .42f).coerceIn(278.dp, 430.dp)
+                Row(Modifier.fillMaxSize()) {
+                    canvas(Modifier.weight(1f).fillMaxHeight())
+                    inspector(Modifier.width(inspectorWidth).fillMaxHeight())
+                }
+            } else {
+                val inspectorHeight = maxHeight * if (panel == EditorPanel.TEMPLATES) .43f else .48f
+                Column(Modifier.fillMaxSize()) {
+                    canvas(Modifier.fillMaxWidth().weight(1f))
+                    inspector(Modifier.fillMaxWidth().height(inspectorHeight))
+                }
+            }
+        }
+    }
+
+    if (choosingFile) {
+        val snapshot = remember(workspace.current, draft) { workspace.editableFileSnapshot() }
+        if (snapshot != null) EditableFileSheet(snapshot, { choosingFile = false }) { includePhoto ->
+            choosingFile = false
+            saveEditable(snapshot, includePhoto)
+        }
+    }
     if (saving) {
         var name by remember { mutableStateOf("") }
         AlertDialog(onDismissRequest = { saving = false }, title = { Text(if (savedPreset == null) "保存水印预设" else "另存为新预设") },
@@ -255,6 +306,56 @@ fun EditorScreen(
         ExportOptions(workspace, info, override, requestLocation, { exporting = false }) { settings, all ->
             exporting = false
             export(settings, all)
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun EditableFileSheet(snapshot: EditableFileSnapshot, close: () -> Unit, save: (Boolean) -> Unit) {
+    var includePhoto by rememberSaveable { mutableStateOf(false) }
+    val withPhoto = includePhoto && snapshot.supportsEmbeddedPhoto
+    ModalBottomSheet(onDismissRequest = close, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = Panel, contentColor = Ink) {
+        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 22.dp)
+            .padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("保存 .kaiphoto", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Medium)
+            Column(Modifier.selectableGroup(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                FileModeOption("仅模板", "保存可编辑图层、排版、Logo 和字体，可用于其他照片。",
+                    selected = !withPhoto, enabled = true) { includePhoto = false }
+                FileModeOption("照片与模板",
+                    if (snapshot.supportsEmbeddedPhoto) "带上当前原照和手动标注，下次打开可继续编辑。"
+                    else "支持 JPEG、PNG、WebP 和尼康 NEF，原照上限 256 MiB。",
+                    selected = withPhoto, enabled = snapshot.supportsEmbeddedPhoto) { includePhoto = true }
+            }
+            if (withPhoto) {
+                Column(Modifier.fillMaxWidth().background(Raised, RoundedCornerShape(9.dp)).padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("原照 · ${snapshot.embeddedPhotoName.orEmpty()}", color = Ink, fontFamily = FontFamily.Monospace,
+                        style = MaterialTheme.typography.labelMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text("接收方能取出这张原照。原照自带的 EXIF 可能包含拍摄地点。",
+                        color = Muted, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+            Button({ save(withPhoto) }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(10.dp)) {
+                Text("选择保存位置")
+            }
+        }
+    }
+}
+
+@Composable
+private fun FileModeOption(title: String, detail: String, selected: Boolean, enabled: Boolean, choose: () -> Unit) {
+    Surface(color = if (selected) Raised else Panel, shape = RoundedCornerShape(12.dp),
+        border = BorderStroke(1.dp, if (selected) Gold else Stroke)) {
+        Row(Modifier.fillMaxWidth().selectable(selected = selected, enabled = enabled, role = Role.RadioButton,
+            onClick = choose).padding(horizontal = 14.dp, vertical = 13.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(13.dp)) {
+            RadioButton(selected = selected, onClick = null, enabled = enabled)
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(title, color = if (enabled) Ink else Muted, style = MaterialTheme.typography.titleSmall)
+                Text(detail, color = Muted, style = MaterialTheme.typography.bodySmall)
+            }
         }
     }
 }
@@ -276,7 +377,7 @@ private fun PreviewStage(
         pan = if (zoom == 1f) Offset.Zero else pan + panChange
     }
 
-    BoxWithConstraints(modifier.background(Ground).padding(horizontal = 12.dp, vertical = 7.dp),
+    BoxWithConstraints(modifier.background(Darkroom).padding(horizontal = 14.dp, vertical = 8.dp),
         contentAlignment = Alignment.Center) {
         val active = if (compare) source else preview
         if (active != null) {
@@ -432,11 +533,25 @@ private fun LayersPanel(
         }
     }
     if (layers.isNotEmpty()) {
-        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            layers.forEachIndexed { index, layer ->
-                val label = if (layers.count { it.label == layer.label } > 1) "${index + 1} · ${layer.label}" else layer.label
-                FilterChip(selected?.id == layer.id, { workspace.activeLayer = layer.id },
-                    { Text(label.take(20), maxLines = 1) })
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+            itemsIndexed(layers, key = { _, layer -> layer.id }) { index, layer ->
+                val active = selected?.id == layer.id
+                val label = layer.label.ifBlank { layer.kind.label }
+                val shape = RoundedCornerShape(8.dp)
+                Row(Modifier.clip(shape).background(if (active) Raised else Panel)
+                    .border(1.dp, if (active) Gold else Stroke, shape)
+                    .selectable(active, role = Role.RadioButton) { workspace.activeLayer = layer.id }
+                    .padding(horizontal = 11.dp, vertical = 9.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text((index + 1).toString().padStart(2, '0'), fontFamily = FontFamily.Monospace,
+                        color = if (active) Gold else Sage, fontSize = 11.sp)
+                    Column {
+                        Text(label, style = MaterialTheme.typography.labelLarge, maxLines = 1,
+                            color = if (layer.visible) Ink else Muted, overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.widthIn(max = 150.dp))
+                        if (!layer.visible) Text("已隐藏", color = Muted, style = MaterialTheme.typography.labelSmall)
+                    }
+                }
             }
         }
     }

@@ -1,6 +1,14 @@
 package app.kai.photomark
 
+import android.app.Activity
+import android.app.Instrumentation
+import android.content.Intent
+import android.content.IntentFilter
+import android.graphics.Bitmap
+import android.net.Uri
 import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
@@ -25,6 +33,7 @@ import org.junit.rules.ExternalResource
 import org.junit.runner.RunWith
 import java.io.File
 import java.util.UUID
+import java.util.zip.ZipFile
 
 @OptIn(ExperimentalTestApi::class)
 @RunWith(AndroidJUnit4::class)
@@ -54,7 +63,7 @@ class CreativeStudioTest {
             compose.onNodeWithText("使用示例照片").performClick()
             compose.waitUntilAtLeastOneExists(hasText("编辑水印"), 20_000)
             val sample = compose.runOnIdle { requireNotNull(workspace.current) }
-            assertEquals(File(workspace.app.filesDir, "studio/示例照片.jpg").path, android.net.Uri.parse(sample.id).path)
+            assertEquals(File(workspace.app.filesDir, "studio/高地 · 示例照片.jpg").path, android.net.Uri.parse(sample.id).path)
             assertTrue(runBlocking { workspace.info(sample) }.metadata.values[MetadataField.MODEL].orEmpty().contains("ZR"))
 
             compose.runOnIdle { assertEquals(Templates.blank, workspace.draft.template) }
@@ -105,6 +114,74 @@ class CreativeStudioTest {
             compose.waitUntilAtLeastOneExists(hasText("胶片边码"), 10_000)
         } finally {
             runBlocking { ids.forEach { dao.deletePreset(it) } }
+        }
+    }
+
+    @Test fun savingEditableFilesEmbedsOnlyTheSelectedCurrentPhoto() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val workspace = compose.runOnIdle { ViewModelProvider(compose.activity)[Workspace::class.java] }
+        compose.runOnIdle { workspace.openSampleDesign(Templates.gallery) }
+        compose.waitUntilAtLeastOneExists(hasContentDescription("水印效果预览"), 20_000)
+        val sample = compose.runOnIdle { requireNotNull(workspace.current).primary }
+        captureIfRequested("editor")
+        for (includePhoto in listOf(false, true)) {
+            compose.onNodeWithText("保存文件").performClick()
+            compose.onNodeWithText("仅模板").assertIsSelected()
+            if (includePhoto) {
+                compose.onNodeWithText("照片与模板").performClick().assertIsSelected()
+                compose.onNodeWithText("原照 · ${sample.name}").assertIsDisplayed()
+                compose.onNodeWithText("接收方能取出这张原照", substring = true).assertIsDisplayed()
+                captureIfRequested("save-project")
+            }
+            val file = File.createTempFile("studio-save-", ".kaiphoto", workspace.app.cacheDir)
+            val filter = IntentFilter(Intent.ACTION_CREATE_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                addDataType(PresetArchive.MIME)
+            }
+            val result = Instrumentation.ActivityResult(Activity.RESULT_OK, Intent().setData(Uri.fromFile(file)))
+            val monitor = instrumentation.addMonitor(filter, result, true)
+            try {
+                compose.onNodeWithText("选择保存位置").performClick()
+                compose.waitUntil(15_000) { runCatching { ZipFile(file).use { it.getEntry("manifest.json") != null } }.getOrDefault(false) }
+                ZipFile(file).use { zip ->
+                    assertEquals(includePhoto, zip.getEntry("photo/original.jpg") != null)
+                    assertTrue(zip.getEntry("template.json") != null)
+                }
+                assertEquals(1, monitor.hits)
+            } finally {
+                instrumentation.removeMonitor(monitor)
+                file.delete()
+            }
+        }
+    }
+
+    private fun captureIfRequested(name: String) {
+        if (InstrumentationRegistry.getArguments().getString("studioScreens") != "true") return
+        compose.waitForIdle()
+        val instrument = InstrumentationRegistry.getInstrumentation()
+        val folder = File(instrument.targetContext.cacheDir, "studio-screens").apply { mkdirs() }
+        val photo = if (name == "editor") compose.onNodeWithContentDescription("水印效果预览")
+            .fetchSemanticsNode().boundsInWindow else null
+        // The compositor can still present the loading frame after Compose has emitted Image semantics.
+        compose.waitUntil(12_000) {
+            val screen = instrument.uiAutomation.takeScreenshot() ?: return@waitUntil false
+            val bitmap = if (screen.config == Bitmap.Config.HARDWARE) {
+                requireNotNull(screen.copy(Bitmap.Config.ARGB_8888, false)).also { screen.recycle() }
+            } else screen
+            try {
+                if (photo != null) {
+                    val colors = mutableSetOf<Int>()
+                    for (x in 1..12) for (y in 1..8) {
+                        val px = (photo.left + photo.width * x / 13).toInt().coerceIn(0, bitmap.width - 1)
+                        val py = (photo.top + photo.height * y / 9).toInt().coerceIn(0, bitmap.height - 1)
+                        colors += bitmap.getPixel(px, py) and 0x00f0f0f0
+                    }
+                    if (colors.size < 12) return@waitUntil false
+                }
+                File(folder, "$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            } finally {
+                bitmap.recycle()
+            }
         }
     }
 

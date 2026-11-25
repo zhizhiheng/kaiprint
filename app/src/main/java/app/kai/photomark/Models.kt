@@ -47,8 +47,9 @@ data class PhotoSource(
     val mime: String? = null,
     val width: Int = 0,
     val height: Int = 0,
+    val embeddedFormat: PhotoFormat? = null,
 ) {
-    val format get() = PhotoFormat.identify(name, mime)
+    val format get() = embeddedFormat ?: PhotoFormat.identify(name, mime)
     val stem get() = name.substringBeforeLast('.')
 }
 

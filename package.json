@@ -31,12 +31,16 @@
     "server.json",
     "formats/kaiphoto-template-v1.schema.json",
     "docs/preset-format.md",
-    "examples/presets/*"
+    "examples/presets/*",
+    "formats/kaiphoto-project-v2.schema.json",
+    "examples/projects/*.kaiphoto"
   ],
   "scripts": {
-    "test": "node --test cli/test/cli.test.js cli/test/metadata.test.js cli/test/mcp.test.js cli/test/preset.test.js",
-    "lint": "prettier --check \"cli/**/*.js\" package.json",
-    "check": "npm run lint && npm test && python3 tools/check-project.py"
+    "test": "node --test cli/test/cli.test.js cli/test/metadata.test.js cli/test/mcp.test.js cli/test/preset.test.js web/archive.test.js",
+    "lint": "prettier --check \"cli/**/*.js\" \"web/*.{js,mjs}\" package.json",
+    "check": "npm run lint && npm test && python3 tools/check-project.py",
+    "web": "node web/serve.mjs",
+    "web:build": "node web/build.mjs"
   },
   "publishConfig": {
     "registry": "https://registry.npmjs.org/",
@@ -53,6 +57,7 @@
     "zod": "4.6.7"
   },
   "devDependencies": {
+    "@zip.js/zip.js": "2.25.0",
     "prettier": "3.10.1"
   },
   "mcpName": "io.github.zhizhiheng/kaiprint"
