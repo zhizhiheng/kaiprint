@@ -20,7 +20,7 @@ node cli/kaiprint.js preset pack examples/presets/travel-notebook.json -o my-tra
 node cli/kaiprint.js preset inspect my-travel.kaiphoto --json
 ```
 
-`pack` 接受原生模板 JSON，按 v1 Schema 校验。图层引用自定义 PNG 或字体时，默认从模板旁的 `assets/` 目录读取，也可用 `--assets 目录` 指定路径。包只收录引用到的素材。`--preview cover.jpg` 可附上 JPEG 预览。输出路径须以 `.kaiphoto` 结尾，请为每次新导出指定空闲文件名。[模板字段与限制](preset-format.md) · [JSON Schema](../formats/kaiphoto-template-v1.schema.json)
+`pack` 接受原生模板 JSON，按 v1 Schema 校验。图层引用自定义 PNG 或字体时，默认从模板旁的 `assets/` 目录读取，也可用 `--assets 目录` 指定路径。包只收录引用到的素材。`--preview cover.jpg` 可附上 JPEG 预览。指定输出路径时使用 `.kaiphoto` 后缀和空闲文件名。省略 `-o` 时直接存入个人库，可用 `--name` 命名。[模板字段与限制](preset-format.md) · [JSON Schema](../formats/kaiphoto-template-v1.schema.json)
 
 `inspect` 接受 `.kaiphoto` 和旧版光印 ZIP。加 `--json` 可取到 `format`（`kaiphoto-v2`、`kaiphoto-v1` 或 `legacy-zip`）、`title`、`id`、`layerCount`、`assets`、`missingAssets` 和 `hasPreview`。例如代理可以先检查 `missingAssets`，再把完整的包交给摄影师。
 
@@ -36,6 +36,18 @@ node cli/kaiprint.js preset inspect 我的作品.kaiphoto --json
 ```
 
 成功时 `inspect` 返回 `kind: "project"`、原照片名称、字节数、SHA-256 与手填字段。未传 `--photo` 时生成可跨照片使用的 v1 模板。[两种文件的兼容说明](preset-format.md) · [可直接打开的 v2 样例](../examples/projects/skye-postcard.kaiphoto)
+
+## 个人库和桌面样片
+
+```sh
+node cli/kaiprint.js preset pack examples/presets/travel-notebook.json --name 我的展签
+node cli/kaiprint.js library list --kind template
+node cli/kaiprint.js import 修图稿.psd -o 修图稿-底图.png --dry-run --json
+node cli/kaiprint.js import 修图稿.psd -o 修图稿-底图.png --yes --json
+node cli/kaiprint.js preset pack examples/presets/travel-notebook.json --photo 修图稿-底图.png --name 展览作品
+```
+
+最后一条把 PNG 和可编辑的水印一起存入作品库。要继续修原来的 Photoshop 或 Krita 图层，保留设计源文件。`import` 也可读取 ORA 和 TIFF，已有输出文件会保留。[个人库与默认水印](user-storage.md) · [桌面格式表](desktop-import.md)
 
 ## 读取原始拍摄信息
 

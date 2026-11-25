@@ -344,7 +344,7 @@ class PhotoRepository(private val context: Context) {
     private fun readExif(source: PhotoSource): ExifInterface? {
         val uri = Uri.parse(source.uri)
         // Media store copies hide GPS unless the app holds ACCESS_MEDIA_LOCATION and asks for the original.
-        val original = if (uri.authority == MediaStore.AUTHORITY && locationAccess) runCatching {
+        val original = if (isIndexedPhoto(uri) && locationAccess) runCatching {
             resolver.openInputStream(MediaStore.setRequireOriginal(uri))?.use { ExifInterface(it) }
         }.getOrNull() else null
         val platform = original ?: runCatching {

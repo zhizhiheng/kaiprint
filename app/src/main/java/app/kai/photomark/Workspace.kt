@@ -42,10 +42,15 @@ class Workspace(application: Application) : AndroidViewModel(application) {
     val app = application as PhotoMarkApp
     private val dao = app.database.dao()
     private val prefs = app.getSharedPreferences("workspace", 0)
-    private val thumbs = object : LruCache<String, Bitmap>(24 * 1024 * 1024) {
-        override fun sizeOf(key: String, value: Bitmap): Int = value.allocationByteCount
+    private class PhotoCache {
+        val thumbs = object : LruCache<String, Bitmap>(24 * 1024 * 1024) {
+            override fun sizeOf(key: String, value: Bitmap): Int = value.allocationByteCount
+        }
+        val details = LruCache<PhotoGroup, PhotoInfo>(48)
     }
-    private val details = LruCache<PhotoGroup, PhotoInfo>(48)
+    @Volatile private var photoCache = PhotoCache()
+    var locationAccess by mutableStateOf(app.photos.locationAccess)
+        private set
     private val undo = ArrayDeque<EditDraft>()
     private val redo = ArrayDeque<EditDraft>()
     private val presetWhenOpened = mutableMapOf<String, WatermarkTemplate>()
@@ -116,12 +121,36 @@ class Workspace(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private fun invalidatePhotos() {
+        // In-flight reads can finish only into the detached cache.
+        photoCache = PhotoCache()
+        detailsGeneration++
+    }
+
     fun checkAccess() {
-        if (access != app.photos.permissionState() || access != LibraryAccess.NONE) refreshLibrary()
+        // Partial access can select a different set while the grant itself stays unchanged.
+        val now = app.photos.permissionState()
+        if (now == access && now != LibraryAccess.PARTIAL && locationAccess == app.photos.locationAccess &&
+            current?.let { it.primary.uri.startsWith("content:") || it.developed?.uri?.startsWith("content:") == true } == true) {
+            // A document provider or the system picker may revoke its individual URI independently.
+            invalidatePhotos()
+        }
+        if (now != access || now != LibraryAccess.NONE || locationAccess != app.photos.locationAccess) refreshLibrary()
     }
 
     fun refreshLibrary() {
-        access = app.photos.permissionState()
+        val scope = app.photos.permissionState()
+        val location = app.photos.locationAccess
+        if (scope != access || scope == LibraryAccess.PARTIAL || location != locationAccess) {
+            invalidatePhotos()
+            if (scope != access || scope == LibraryAccess.PARTIAL) {
+                device = emptyList()
+                gallery = emptyList()
+                hasMore = false
+            }
+        }
+        access = scope
+        locationAccess = location
         val generation = ++galleryGeneration
         if (access == LibraryAccess.NONE) {
             device = emptyList()
@@ -164,6 +193,41 @@ class Workspace(application: Application) : AndroidViewModel(application) {
                 persist(uri)
                 runCatching { app.photos.openDocument(uri) }.getOrNull()
             }
+        }
+    }
+
+    /** Replace just the selected source. Late picker or provider responses must never target another photo. */
+    fun replaceCurrentPhoto(expectedId: String, uri: Uri) {
+        if (current?.id != expectedId) return
+        val session = editing
+        viewModelScope.launch {
+            val replacement = capture("无法打开选择的原片，已保留当前照片") { withContext(Dispatchers.IO) {
+                val source = app.photos.openDocument(uri) ?: throw IOException("无法识别这张照片")
+                val group = PhotoGroup(source)
+                app.photos.info(group)
+                group
+            } } ?: return@launch
+            if (editing !== session || current?.id != expectedId || screen != Screen.EDITOR) return@launch
+            if (editing.any { it.id != expectedId && it.id == replacement.id }) {
+                message = "所选原片已在这组照片中，已保留当前照片"
+                return@launch
+            }
+            persist(uri)
+            fun retarget(state: EditDraft): EditDraft {
+                val previous = state.overrides[expectedId]
+                val values = if (previous == null) state.overrides else (state.overrides - expectedId) + (replacement.id to previous)
+                return state.copy(overrides = values, pixelChoices = state.pixelChoices - expectedId)
+            }
+            draft = retarget(draft)
+            for (i in undo.indices) undo[i] = retarget(undo[i])
+            for (i in redo.indices) redo[i] = retarget(redo[i])
+            adjustmentStart = adjustmentStart?.let(::retarget)
+            editing = editing.toMutableList().also { it[activeIndex] = replacement }
+            ProjectPhotoStore.remember(this@Workspace, editing)
+            imported = (listOf(replacement.primary) + imported).distinctBy(PhotoSource::uri)
+            invalidatePhotos()
+            saveSession()
+            mergeGallery(galleryGeneration)
         }
     }
 
@@ -715,16 +779,13 @@ class Workspace(application: Application) : AndroidViewModel(application) {
 
     suspend fun thumbnail(group: PhotoGroup): Bitmap? = withContext(Dispatchers.IO) {
         val key = group.developed?.uri ?: group.id
+        val thumbs = photoCache.thumbs
         thumbs.get(key) ?: runCatching { app.photos.thumbnail(group, 360) }.getOrNull()?.also { thumbs.put(key, it) }
     }
 
     suspend fun info(group: PhotoGroup): PhotoInfo = withContext(Dispatchers.IO) {
+        val details = photoCache.details
         details.get(group) ?: app.photos.info(group).also { details.put(group, it) }
-    }
-
-    fun locationGranted() {
-        details.evictAll()
-        detailsGeneration++
     }
 
     /** Checks up to [limit] photos of the edit the way the exporter will. */

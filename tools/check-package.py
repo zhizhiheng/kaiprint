@@ -14,6 +14,7 @@ NPM = shutil.which("npm")
 def main():
     with tempfile.TemporaryDirectory(prefix="kaiprint-package-") as directory:
         stage = Path(directory)
+        os.environ["KAIPRINT_HOME"] = str(stage / "user-home")
         [packed] = json.loads(subprocess.check_output(
             [NPM, "pack", "--json", "--pack-destination", directory], cwd=ROOT
         ))
@@ -26,7 +27,7 @@ def main():
         expected.update(p.relative_to(ROOT).as_posix() for p in (ROOT / "examples/projects").glob("*.kaiphoto"))
         expected.update(["package.json", "LICENSE", "README.md", "cli/models.json", "docs/cli.md",
                          "formats/kaiphoto-template-v1.schema.json", "formats/kaiphoto-project-v2.schema.json", "docs/preset-format.md",
-                         "docs/brand-marks.md", "docs/agents.md", "server.json", "skills/kaiprint/SKILL.md", "model-marks/catalog.csv", "app/src/main/assets/places/cities.tsv"])
+                         "docs/brand-marks.md", "docs/agents.md", "docs/user-storage.md", "docs/desktop-import.md", "server.json", "skills/kaiprint/SKILL.md", "model-marks/catalog.csv", "app/src/main/assets/places/cities.tsv"])
         with tarfile.open(tarball, "r:gz") as archive:
             files = {m.name.removeprefix("package/") for m in archive if m.isfile()}
         if files != expected:
@@ -61,6 +62,12 @@ sharp({create:{width:180,height:120,channels:3,background:"#315444"}})
         project = invoke("preset", "pack", str(examples / "travel-notebook.json"), "--photo", "test.jpg", "-o", "trial-project.kaiphoto")
         assert project["kind"] == "project" and project["photo"]["bytes"] == (stage / "test.jpg").stat().st_size
         assert invoke("preset", "inspect", "trial-project.kaiphoto")["photo"] == project["photo"]
+        assert invoke("config", "show")["paths"]["home"] == str(stage / "user-home")
+        project_in_library = invoke("library", "add", "trial-project.kaiphoto", "--kind", "project")
+        assert Path(project_in_library["output"]).parent == stage / "user-home" / "projects"
+        fixture = ROOT / "cli/test/fixtures/gradient-rle.psd"
+        imported = invoke("import", str(fixture), "-o", "artwork.png", "--yes")
+        assert imported["format"] == "PSD" and (stage / "artwork.png").read_bytes().startswith(b"\x89PNG")
         installed = invoke("skill", "--install", str(stage / "skills"))
         assert (Path(installed["directory"]) / "SKILL.md").is_file()
         assert subprocess.check_output([str(cli), "mcp", "--version"], cwd=stage, text=True).strip() == packed["version"]

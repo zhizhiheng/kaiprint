@@ -11,3 +11,13 @@
 | GeoNames cities15000 | 离线查找照片所在城市（`assets/places/cities.tsv`） | CC BY 4.0。中文名取自 GeoNames 别名库并转为简体。[数据](https://download.geonames.org/export/dump/) · [生成脚本](../tools/build-cities.py) |
 
 项目在构建时从上游下载固定版本的原生源码并校验 SHA-256。许可证副本位于 APK 的 `assets/licenses/`。LibRaw、libheif 和 libde265 以独立共享库打包。
+
+## 桌面设计文档解码
+
+| 组件 | 使用位置 | 用途和许可 |
+| --- | --- | --- |
+| ag-psd 34.2.3 | CLI、MCP、离线 Web Worker | 读取 PSD 已保存的合成画面。MIT。[源码](https://github.com/Agamnentzar/ag-psd) |
+| GeoTIFF.js 3.0.5 | 离线 Web Worker | 读取 TIFF 样本、透明通道、方向和色彩标签。MIT。[源码](https://github.com/geotiffjs/geotiff.js) |
+| zip.js 2.25.0 | CLI、MCP、Web | 在 KRA 和 ORA 中查找整幅合成图，也用于 Web 读写 KaiPhoto。BSD-3-Clause。[源码](https://github.com/gildas-lormeau/zip.js) |
+
+Web 离线包在 `notices/` 中附带解码器及所用组件的许可证。

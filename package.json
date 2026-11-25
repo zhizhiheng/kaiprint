@@ -33,11 +33,13 @@
     "docs/preset-format.md",
     "examples/presets/*",
     "formats/kaiphoto-project-v2.schema.json",
-    "examples/projects/*.kaiphoto"
+    "examples/projects/*.kaiphoto",
+    "docs/user-storage.md",
+    "docs/desktop-import.md"
   ],
   "scripts": {
-    "test": "node --test cli/test/cli.test.js cli/test/metadata.test.js cli/test/mcp.test.js cli/test/preset.test.js web/archive.test.js",
-    "lint": "prettier --check \"cli/**/*.js\" \"web/*.{js,mjs}\" package.json",
+    "test": "node tools/test-node.mjs",
+    "lint": "prettier --check \"cli/**/*.js\" \"web/*.{js,mjs}\" tools/test-node.mjs package.json",
     "check": "npm run lint && npm test && python3 tools/check-project.py",
     "web": "node web/serve.mjs",
     "web:build": "node web/build.mjs"
@@ -48,6 +50,8 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.2",
+    "@zip.js/zip.js": "2.25.0",
+    "ag-psd": "34.2.3",
     "ajv": "8.20.0",
     "exifr": "7.1.3",
     "exiftool-vendored": "39.4.0",
@@ -57,7 +61,7 @@
     "zod": "4.6.7"
   },
   "devDependencies": {
-    "@zip.js/zip.js": "2.25.0",
+    "geotiff": "3.0.5",
     "prettier": "3.10.1"
   },
   "mcpName": "io.github.zhizhiheng/kaiprint"

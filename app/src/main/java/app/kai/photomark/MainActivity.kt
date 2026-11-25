@@ -1,10 +1,8 @@
 package app.kai.photomark
 
-import android.Manifest
 import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
-import android.os.Build
 import android.os.Bundle
 import android.util.LruCache
 import androidx.activity.ComponentActivity
@@ -102,7 +100,6 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.compose.LifecycleResumeEffect
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -129,6 +126,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         // A recreated screen already holds the photos from its first launch.
         if (savedInstanceState == null) receive(intent)
+        else if (savedInstanceState.getBoolean("editingPhoto")) workspace.reopen()
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
             navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
@@ -146,6 +144,11 @@ class MainActivity : ComponentActivity() {
                 PhotoMark(workspace)
             }
         }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putBoolean("editingPhoto", workspace.screen == Screen.EDITOR)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -168,14 +171,12 @@ class MainActivity : ComponentActivity() {
 private fun PhotoMark(workspace: Workspace) {
     val snackbars = remember { SnackbarHostState() }
     val snackbarScope = rememberCoroutineScope()
-    val context = LocalContext.current
     val pick = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(150), workspace::importFiles)
+    val pickPhotos = { pick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
+    val permissions = photoPermissionActions(workspace, pickPhotos)
     val files = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments(), workspace::importFiles)
     val folder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         uri?.let(workspace::importFolder)
-    }
-    val permissions = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
-        workspace.refreshLibrary()
     }
     val logo = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(workspace::addLogo) }
     val font = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(workspace::addFont) }
@@ -183,6 +184,12 @@ private fun PhotoMark(workspace: Workspace) {
         uri?.let(workspace::importPreset)
     }
     var pendingDesign by rememberSaveable { mutableStateOf<String?>(null) }
+    var replacingPhoto by rememberSaveable { mutableStateOf<String?>(null) }
+    val selectOriginal = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        val id = replacingPhoto
+        replacingPhoto = null
+        if (uri != null && id != null) workspace.replaceCurrentPhoto(id, uri)
+    }
     var chooseDesignSource by rememberSaveable { mutableStateOf(false) }
     val designPhoto = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         val encoded = pendingDesign
@@ -238,34 +245,16 @@ private fun PhotoMark(workspace: Workspace) {
         val stem = title.substringAfterLast('/').substringAfterLast('\\').trim().take(65).ifBlank { "光印" }
         editableExport.launch("$stem.kaiphoto")
     }
-    val notification = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
-    val mediaLocation = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) workspace.locationGranted()
-    }
     val diagnostics = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { uri ->
         uri?.let(workspace::writeDiagnostics)
     }
 
-    LifecycleResumeEffect(workspace) {
-        workspace.checkAccess()
-        onPauseOrDispose { }
-    }
     val message = workspace.message
     LaunchedEffect(message) {
         if (message != null) {
             workspace.message = null
             snackbarScope.launch { snackbars.showSnackbar(message) }
         }
-    }
-
-    fun browse() {
-        val request = when {
-            Build.VERSION.SDK_INT >= 34 -> arrayOf(Manifest.permission.READ_MEDIA_IMAGES,
-                Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
-            Build.VERSION.SDK_INT >= 33 -> arrayOf(Manifest.permission.READ_MEDIA_IMAGES)
-            else -> arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
-        }
-        permissions.launch(request)
     }
 
     BackHandler(workspace.screen != Screen.LIBRARY || workspace.selected.isNotEmpty()) {
@@ -294,24 +283,17 @@ private fun PhotoMark(workspace: Workspace) {
     ) { inner ->
         Box(Modifier.fillMaxSize().padding(inner)) {
             when (workspace.screen) {
-                Screen.LIBRARY -> LibraryScreen(workspace, ::browse,
-                    { pick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                Screen.LIBRARY -> LibraryScreen(workspace, permissions.browse, pickPhotos,
                     { files.launch(arrayOf("*/*")) }, { folder.launch(null) }, { presetImport.launch(arrayOf("*/*")) })
-                Screen.EDITOR -> EditorScreen(workspace, { logo.launch(arrayOf("image/*")) }, { font.launch(arrayOf("*/*")) }, {
-                    // Device library photos hide their GPS until the app may read media locations.
-                    if (BuildConfig.FLAVOR == "library" && !workspace.app.photos.locationAccess) {
-                        mediaLocation.launch(Manifest.permission.ACCESS_MEDIA_LOCATION)
-                    }
-                }, ::saveEditable) { settings, all ->
-                    workspace.enqueue(settings, all)
-                    if (Build.VERSION.SDK_INT >= 33 &&
-                        context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED
-                    ) notification.launch(Manifest.permission.POST_NOTIFICATIONS)
-                }
+                Screen.EDITOR -> EditorScreen(workspace, { logo.launch(arrayOf("image/*")) }, { font.launch(arrayOf("*/*")) },
+                    permissions.readLocation, {
+                        replacingPhoto = workspace.current?.id
+                        selectOriginal.launch(arrayOf("*/*"))
+                    }, ::saveEditable, workspace::enqueue)
                 Screen.PRESETS -> PresetScreen(workspace, ::openDesign,
                     { presetImport.launch(arrayOf("*/*")) },
                     { preset -> presetToExport = preset.id; presetExport.launch("光印-${preset.name}.kaiphoto") })
-                Screen.EXPORTS -> ExportScreen(workspace) { diagnostics.launch("photomark-diagnostics.csv") }
+                Screen.EXPORTS -> ExportScreen(workspace, permissions.enableNotifications) { diagnostics.launch("photomark-diagnostics.csv") }
             }
         }
     }
@@ -358,7 +340,7 @@ private fun LibraryScreen(
                     DropdownMenuItem(text = { Text("导入文件夹") }, onClick = { more = false; folder() })
                     DropdownMenuItem(text = { Text("打开 .kaiphoto") }, onClick = { more = false; openArchive() })
                     if (BuildConfig.FLAVOR == "library") {
-                        DropdownMenuItem(text = { Text("管理相册权限") }, onClick = { more = false; browse() })
+                        DropdownMenuItem(text = { Text(if (workspace.access == LibraryAccess.PARTIAL) "调整可访问的照片" else "管理相册权限") }, onClick = { more = false; browse() })
                         DropdownMenuItem(text = { Text("刷新相册") }, onClick = { more = false; workspace.refreshLibrary() })
                     }
                 }
@@ -395,7 +377,7 @@ private fun LibraryScreen(
                 }
                 if (BuildConfig.FLAVOR == "library" && workspace.access != LibraryAccess.FULL) {
                     HorizontalDivider(color = Stroke)
-                    TextButton(onClick = browse) { Text("启用应用内相册", color = Sage) }
+                    TextButton(onClick = browse) { Text(if (workspace.access == LibraryAccess.PARTIAL) "调整可访问的照片" else "启用应用内相册", color = Sage) }
                 }
             }
         } else {
@@ -403,6 +385,7 @@ private fun LibraryScreen(
                 contentPadding = PaddingValues(horizontal = 16.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
+                if (workspace.access == LibraryAccess.PARTIAL) item { TextButton(browse) { Text("调整可访问的照片") } }
                 item { FilterChip(album == null, { album = null }, { Text("全部相册") }) }
                 items(albums) { name -> FilterChip(album == name, { album = if (album == name) null else name },
                     { Text(name, maxLines = 1, overflow = TextOverflow.Ellipsis) }) }
@@ -484,7 +467,7 @@ private fun LibraryScreen(
 
 @Composable
 internal fun Thumbnail(workspace: Workspace, photo: PhotoGroup, modifier: Modifier = Modifier) {
-    val result by produceState<android.graphics.Bitmap?>(null, photo) {
+    val result by produceState<android.graphics.Bitmap?>(null, photo, workspace.detailsGeneration) {
         value = null
         value = workspace.thumbnail(photo)
     }
@@ -614,12 +597,14 @@ private fun PresetThumbnail(workspace: Workspace, template: WatermarkTemplate) {
 }
 
 @Composable
-private fun ExportScreen(workspace: Workspace, diagnostics: () -> Unit) {
+private fun ExportScreen(workspace: Workspace, enableNotifications: (() -> Unit)?, diagnostics: () -> Unit) {
     val jobs by workspace.jobs.collectAsState()
     val selected = jobs.firstOrNull { it.id == workspace.selectedJob }
     if (selected == null) {
         Column(Modifier.fillMaxSize()) {
-            AppHeading("导出记录")
+            AppHeading("导出记录") {
+                if (enableNotifications != null) TextButton(enableNotifications) { Text("开启进度通知") }
+            }
             if (jobs.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("成片会显示在这里", color = Muted) }
             } else LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
@@ -663,6 +648,9 @@ private fun ExportScreen(workspace: Workspace, diagnostics: () -> Unit) {
                     progress = { if (items.isEmpty()) 0f else (finished + failed) / items.size.toFloat() },
                     modifier = Modifier.fillMaxWidth(),
                 )
+                if (enableNotifications != null && (running || hasPending)) {
+                    TextButton(enableNotifications) { Text("开启进度通知") }
+                }
                 Text("已导出 $finished / ${items.size} 张" + if (failed > 0) " · $failed 张失败" else "", color = Muted)
                 if (finished > 0) Text("成片位置 · Pictures/光印", color = Muted, style = MaterialTheme.typography.labelMedium)
                 Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {

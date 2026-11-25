@@ -2,6 +2,7 @@ import exifr from "exifr";
 import { readPackage, writePackage } from "./archive.js";
 import { draw, photoImage, newCanvas } from "./drawing.js";
 import { icon } from "./icons.js";
+import { decodeEditorFile, importDescription } from "./editor-import.js";
 
 const $ = (s) => document.querySelector(s);
 const html = (s) =>
@@ -369,17 +370,21 @@ function properties() {
     panel.innerHTML =
       '<div class="prop-title"><span class="kind">' +
       icon("LOGO") +
-      "</span><div><h3>原始照片</h3><small>" +
-      html(state.photo?.name || "尚未选择照片") +
+      "</span><div><h3>" +
+      (state.sourceDocument ? "导入底图" : "原始照片") +
+      "</h3><small>" +
+      html(state.sourceDocument?.name || state.photo?.name || "尚未选择照片") +
       '</small></div></div><button class="secondary" data-replace>更换照片</button>' +
       group(
         "照片资料",
         '<p class="hint">' +
-          (state.demo
-            ? "Andrew Ridley 摄于斯凯岛。机型和曝光为排版示例。"
-            : state.image
-              ? "原文件保持不变。"
-              : "当前浏览器无法预览这张原照，可以保存作品并在 Android 上继续。") +
+          (state.sourceDocument
+            ? html(importDescription(state.sourceDocument.format))
+            : state.demo
+              ? "Andrew Ridley 摄于斯凯岛。机型和曝光为排版示例。"
+              : state.image
+                ? "原文件保持不变。"
+                : "当前浏览器无法预览这张原照，可以保存作品并在 Android 上继续。") +
           '</p><dl class="info-table">' +
           details +
           "</dl>",
@@ -656,7 +661,7 @@ async function paint() {
 function refresh({ form = true, tiles = false } = {}) {
   $("#document-name").textContent = state.demo
     ? "斯凯岛 · 山间手记"
-    : state.photo?.name || state.template.title;
+    : state.sourceDocument?.name || state.photo?.name || state.template.title;
   $("#undo").disabled = !past.length;
   $("#redo").disabled = !future.length;
   layerList();
@@ -971,10 +976,10 @@ async function placesFor(lat, lon) {
     CITY_COUNTRY: city ? cityLabel(city, true) : null,
   };
 }
-async function photoData(file) {
+async function photoData(file, metadataFile = file) {
   const [image, ex] = await Promise.all([
       photoImage(file).catch(() => null),
-      exifr.parse(file).catch(() => null),
+      exifr.parse(metadataFile).catch(() => null),
     ]),
     tags = ex || {},
     vals = {};
@@ -1031,7 +1036,44 @@ async function openFile(file) {
   const turn = ++fileId;
   const bytes = new Uint8Array(await file.slice(0, 4).arrayBuffer());
   let next, msg;
-  if (
+  const imported = await decodeEditorFile(file);
+  if (imported) {
+    const readSourceTags = ["TIFF", "AVIF", "HEIF"].includes(
+      imported.source.format,
+    );
+    const data = await photoData(
+      imported.file,
+      readSourceTags ? file : imported.file,
+    );
+    if (!data.image)
+      throw Error("无法解码文档中的 PNG 底图，请在修图软件中重新导出");
+    // Retain the photographic labels read from the source as per-photo values in a v2 project.
+    const overrides = readSourceTags
+      ? Object.fromEntries(
+          Object.entries(data.metadata)
+            .filter(
+              ([key]) => !Object.hasOwn(state.template.captions ?? {}, key),
+            )
+            .map(([key, value]) => [
+              key,
+              Array.from(value).slice(0, 120).join(""),
+            ]),
+        )
+      : {};
+    if (readSourceTags) {
+      const printedPlace = data.places?.[state.template.place];
+      if (printedPlace)
+        overrides.LOCATION = Array.from(printedPlace).slice(0, 120).join("");
+    }
+    next = {
+      ...state,
+      ...data,
+      overrides,
+      sourceDocument: imported.source,
+      demo: false,
+    };
+    msg = importDescription(imported.source.format);
+  } else if (
     (bytes[0] === 80 && bytes[1] === 75) ||
     /\.(kaiphoto|zip)$/i.test(file.name)
   ) {
@@ -1045,6 +1087,7 @@ async function openFile(file) {
     if (pack.photo) {
       Object.assign(next, await photoData(pack.photo), {
         overrides: pack.overrides,
+        sourceDocument: null,
         demo: false,
       });
     }
@@ -1056,7 +1099,13 @@ async function openFile(file) {
     const data = await photoData(file);
     if (!data.image && !/\.(nef|hei[cf]|avif)$/i.test(file.name))
       throw Error("无法读取这张照片");
-    next = { ...state, ...data, overrides: {}, demo: false };
+    next = {
+      ...state,
+      ...data,
+      overrides: {},
+      sourceDocument: null,
+      demo: false,
+    };
     msg = data.image ? "照片已打开" : "已保留原照。此浏览器无法解码该格式";
   }
   if (turn !== fileId) return;
@@ -1102,6 +1151,10 @@ const safeName = (s) =>
     .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_")
     .slice(0, 90) || "光印作品";
 $("#save").onclick = () => {
+  const canChoose = typeof window.showSaveFilePicker === "function";
+  const projectDescription = state.sourceDocument
+    ? `保留从 ${html(state.sourceDocument.format)} 转换的 PNG 底图、当前水印图层和标注。`
+    : "保留原始照片、图层和本张标注。原照可能包含拍摄地点等 EXIF 信息。";
   show(
     "保存 .kaiphoto",
     textInput(
@@ -1112,17 +1165,38 @@ $("#save").onclick = () => {
     ) +
       '<label class="save-option"><input type="radio" name="mode" value="project" ' +
       (state.photo ? "checked" : "disabled") +
-      '><span><strong>作品 · 照片与模板</strong><small>保留原始照片、图层和本张标注。原照可能包含拍摄地点等 EXIF 信息。</small></span></label><label class="save-option"><input type="radio" name="mode" value="template" ' +
+      "><span><strong>作品 · 照片与模板</strong><small>" +
+      projectDescription +
+      "</small></span></label>" +
+      '<label class="save-option"><input type="radio" name="mode" value="template" ' +
       (!state.photo ? "checked" : "") +
-      '><span><strong>纯模板</strong><small>仅包含可编辑排版及引用的图标和字体。</small></span></label><div class="dialog-actions"><button id="download-package" class="primary">' +
+      "><span><strong>纯模板</strong><small>仅包含可编辑排版及引用的图标和字体。</small></span></label>" +
+      '<p id="library-location" class="hint"></p><div class="dialog-actions">' +
+      (canChoose
+        ? '<button id="choose-save-location" class="secondary">选择保存位置</button>'
+        : "") +
+      '<button id="download-package" class="primary">' +
       icon("save") +
-      "保存文件</button></div>",
+      "下载文件</button></div>",
   );
-  $("#download-package").onclick = async (e) => {
-    const b = e.currentTarget;
-    b.disabled = true;
+  const mode = () => $("input[name=mode]:checked").value;
+  const location = () => {
+    $("#library-location").textContent =
+      "与 CLI 和 MCP 共用时，保存到用户目录 .kaiprint/" +
+      (mode() === "project" ? "projects/" : "templates/") +
+      "。";
+  };
+  location();
+  for (const radio of document.querySelectorAll("input[name=mode]"))
+    radio.onchange = location;
+  async function savePackage(chooseLocation) {
+    const buttons = [
+      ...document.querySelectorAll("#modal-body .dialog-actions button"),
+    ];
+    buttons.forEach((b) => (b.disabled = true));
     try {
-      const project = $("input[name=mode]:checked").value === "project";
+      const project = mode() === "project";
+      const filename = safeName($("#filename").value) + ".kaiphoto";
       const refs = new Set(
         state.template.layers
           .flatMap((l) => [l.fontFile, l.logoFile])
@@ -1135,22 +1209,46 @@ $("#save").onclick = () => {
       };
       if (project)
         Object.assign(args, { photo: state.photo, overrides: state.overrides });
+      const target = chooseLocation
+        ? await window.showSaveFilePicker({
+            id: project ? "kaiprint-projects" : "kaiprint-templates",
+            suggestedName: filename,
+            types: [
+              {
+                description: "KaiPhoto 文件",
+                accept: { "application/zip": [".kaiphoto"] },
+              },
+            ],
+          })
+        : null;
       const blob = await writePackage(args);
-      download(blob, safeName($("#filename").value) + ".kaiphoto");
+      if (target) {
+        const writable = await target.createWritable();
+        try {
+          await writable.write(blob);
+          await writable.close();
+        } catch (error) {
+          await writable.abort().catch(() => {});
+          throw error;
+        }
+      } else download(blob, filename);
       dialog.close();
       if (project) dirty = false;
       announce(project ? "作品已保存" : "模板已保存");
     } catch (err) {
+      if (err.name === "AbortError") return;
       message(err);
       const note = document.createElement("p");
-      note.className = "hint";
+      note.className = "hint save-error";
       note.textContent = err.message;
-      $("#modal-body .hint")?.remove();
+      $("#modal-body .save-error")?.remove();
       $("#modal-body").append(note);
     } finally {
-      b.disabled = false;
+      buttons.forEach((b) => (b.disabled = false));
     }
-  };
+  }
+  $("#download-package").onclick = () => savePackage(false);
+  if (canChoose) $("#choose-save-location").onclick = () => savePackage(true);
 };
 $("#export").onclick = () => {
   if (!state.image) return;
@@ -1204,7 +1302,6 @@ async function init() {
   });
   sampleImage = await photoImage(file);
   const tpl = structuredClone(presets.find((t) => t.id === "field-postcard"));
-  tpl.captions = { TITLE: "Isle of Skye", AUTHOR: "Andrew Ridley" };
   state = {
     photo: file,
     image: sampleImage,
@@ -1215,8 +1312,6 @@ async function init() {
     assets: new Map(),
     places: null,
   };
-  delete state.overrides.TITLE;
-  delete state.overrides.AUTHOR;
   selected = tpl.layers[0].id;
   document.querySelector(".workspace").inert = false;
   $("#open").disabled = false;

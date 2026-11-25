@@ -1,6 +1,12 @@
 import path from "node:path";
 import { tmpdir } from "node:os";
-import { constants, createWriteStream } from "node:fs";
+import {
+  constants,
+  createWriteStream,
+  open as openFd,
+  close as closeFd,
+} from "node:fs";
+import { promisify } from "node:util";
 import { open, mkdir, mkdtemp, rm, realpath } from "node:fs/promises";
 import { pipeline } from "node:stream/promises";
 import { crc32 } from "node:zlib";
@@ -11,7 +17,7 @@ import sharp from "sharp";
 import schema from "../formats/kaiphoto-template-v1.schema.json" with { type: "json" };
 import projectSchema from "../formats/kaiphoto-project-v2.schema.json" with { type: "json" };
 import { freeOutput, publishNew, usage } from "./files.js";
-import { maxPhotoBytes, stagePhoto } from "./project-photo.js";
+import { maxPhotoBytes, stagePhoto, readPhotoFile } from "./project-photo.js";
 
 const ajv = new Ajv().addSchema(schema, "kaiphoto-template-v1.schema.json");
 const validate = ajv.getSchema("kaiphoto-template-v1.schema.json");
@@ -54,6 +60,18 @@ function templateInfo(bytes) {
   }
   return { template, refs };
 }
+export async function inspectLayout(file) {
+  const { template, refs } = templateInfo(
+    await boundedFile(file, limits.template),
+  );
+  return {
+    id: template.id,
+    title: template.title,
+    layerCount: template.layers?.length ?? 0,
+    assets: [...refs],
+  };
+}
+
 function entryLimit(name, project) {
   if (name === "manifest.json")
     return project ? limits.projectManifest : limits.manifest;
@@ -64,7 +82,7 @@ function entryLimit(name, project) {
   throw new Error("包内包含未知文件：" + name);
 }
 async function boundedFile(file, limit) {
-  const fd = await open(file, "r");
+  const fd = await open(file, constants.O_RDONLY | (constants.O_NONBLOCK || 0));
   try {
     const st = await fd.stat();
     if (!st.isFile() || st.size > limit)
@@ -175,11 +193,29 @@ async function verifyOriginal(zip, entry, photo) {
   }
 }
 
-export async function inspectPreset(file) {
-  const zip = await yauzl.openPromise(file, {
-    strictFileNames: true,
-    autoClose: false,
-  });
+const zipOptions = { strictFileNames: true, autoClose: false };
+
+// A managed library item must still be a regular entry when it is opened.
+// yauzl takes ownership of the numeric descriptor after successfully opening it.
+async function openManagedArchive(file) {
+  const fd = await promisify(openFd)(
+    file,
+    constants.O_RDONLY |
+      (constants.O_NOFOLLOW || 0) |
+      (constants.O_NONBLOCK || 0),
+  );
+  try {
+    return await yauzl.fromFdPromise(fd, zipOptions);
+  } catch (error) {
+    await promisify(closeFd)(fd);
+    throw error;
+  }
+}
+
+async function readArchive(file, layoutEntries) {
+  const zip = layoutEntries
+    ? await openManagedArchive(file)
+    : await yauzl.openPromise(file, zipOptions);
   try {
     if (zip.entryCount > 52) throw new Error("包内文件过多");
     const entries = new Map();
@@ -189,6 +225,8 @@ export async function inspectPreset(file) {
       entries.set(entry.fileName, entry);
     }
     const project = await readManifest(zip, entries.get("manifest.json"));
+    if (project && layoutEntries)
+      throw new Error("套用模板需要纯模板，所选文件已包含其他照片");
     const native = entries.has("manifest.json");
     if (entries.size > (project ? 52 : native ? 51 : 50))
       throw new Error("包内文件过多");
@@ -206,20 +244,25 @@ export async function inspectPreset(file) {
         total += entry.uncompressedSize;
     }
     if (total > limits.total) throw new Error("模板内容超过 48 MiB");
-    const { template, refs } = templateInfo(
-      await entryBuffer(zip, entries.get("template.json")),
-    );
+    const layout = await entryBuffer(zip, entries.get("template.json"));
+    const { template, refs } = templateInfo(layout);
+    layoutEntries?.set("template.json", layout);
     const assets = [...entries.keys()].filter((name) => safeAsset.test(name));
     if (assets.some((name) => !refs.has(name)))
       throw new Error("存在模板未引用的素材");
     const missing = [...refs].filter((name) => !entries.has(name));
-    if (project && missing.length)
+    if ((project || layoutEntries) && missing.length)
       throw new Error("作品缺少引用的素材：" + missing.join("、"));
     for (const [name, entry] of entries) {
       if (name === "manifest.json" || name === "template.json") continue;
       if (name === project?.photo.path)
         await verifyOriginal(zip, entry, project.photo);
-      else await checkContent(name, await entryBuffer(zip, entry));
+      else {
+        const data = await entryBuffer(zip, entry);
+        await checkContent(name, data);
+        // A v1 preview shows the template sample, not the newly selected photograph.
+        if (name !== "preview.jpg") layoutEntries?.set(name, data);
+      }
     }
     const format = project
       ? "kaiphoto-v2"
@@ -233,6 +276,67 @@ export async function inspectPreset(file) {
   } finally {
     zip.close();
   }
+}
+
+export async function inspectPreset(file) {
+  return readArchive(file);
+}
+
+async function readOverrides(file) {
+  const values = file
+    ? JSON.parse(utf8.decode(await boundedFile(file, limits.projectManifest)))
+    : {};
+  if (!validateOverrides(values))
+    throw new Error(
+      "无效的作品照片字段：" + ajv.errorsText(validateOverrides.errors),
+    );
+  return values;
+}
+
+async function writeBundle(target, entries, original, project) {
+  const zip = new yazl.ZipFile();
+  zip.on("error", (error) => zip.outputStream.destroy(error));
+  const options = { mtime: new Date("2000-01-01T12:00:00Z"), mode: 0o100644 };
+  for (const [name, data] of entries) zip.addBuffer(data, name, options);
+  if (project)
+    zip.addFile(original, project.photo.path, { ...options, compress: false });
+  const writing = pipeline(
+    zip.outputStream,
+    createWriteStream(target, { flags: "wx", mode: 0o600 }),
+  );
+  zip.end();
+  await writing;
+}
+
+/** Upgrade a validated v1 or legacy template to a v2 project; the caller owns the private staging directory. */
+export async function projectFromTemplate(file, photo, overrides, staged) {
+  const entries = new Map();
+  const old = await readArchive(file, entries);
+  const fields = await readOverrides(overrides);
+  const original = staged
+    ? path.join(path.dirname(staged), "original")
+    : undefined;
+  const project = {
+    kind: "project",
+    photo: await readPhotoFile(photo, original),
+    overrides: fields,
+  };
+  const header = { ...manifest, formatVersion: 2, ...project };
+  checkProjectManifest(header);
+  const descriptor = Buffer.from(JSON.stringify(header));
+  entries.set("manifest.json", descriptor);
+  const designSize = Array.from(entries.values()).reduce(
+    (sum, entry) => sum + entry.length,
+    0,
+  );
+  if (
+    descriptor.length > limits.projectManifest ||
+    designSize > limits.total ||
+    entries.size + 1 > 52
+  )
+    throw new Error("模板与照片清单超出作品包的限制");
+  if (staged) await writeBundle(staged, entries, original, project);
+  return { ...old, format: "kaiphoto-v2", hasPreview: false, ...project };
 }
 
 export async function packPreset(
@@ -250,15 +354,7 @@ export async function packPreset(
   await freeOutput(output);
   const bytes = await boundedFile(file, limits.template);
   const { template, refs } = templateInfo(bytes);
-  const userFields = overrides
-    ? JSON.parse(
-        utf8.decode(await boundedFile(overrides, limits.projectManifest)),
-      )
-    : {};
-  if (!validateOverrides(userFields))
-    throw new Error(
-      "无效的作品照片字段：" + ajv.errorsText(validateOverrides.errors),
-    );
+  const userFields = await readOverrides(overrides);
   const dir = path.dirname(output);
   await mkdir(dir, { recursive: true });
   const staging = await mkdtemp(path.join(dir, ".kaiphoto-"));
@@ -266,20 +362,8 @@ export async function packPreset(
     let project = null;
     const original = path.join(staging, "original");
     if (photo) {
-      const fd = await open(photo, constants.O_RDONLY | constants.O_NONBLOCK);
-      try {
-        const st = await fd.stat();
-        if (!st.isFile() || st.size < 1 || st.size > maxPhotoBytes)
-          throw new Error("作品原照需为不超过 256 MiB 的照片文件");
-        const embedded = await stagePhoto(
-          fd.createReadStream(),
-          original,
-          path.basename(photo),
-        );
-        project = { kind: "project", photo: embedded, overrides: userFields };
-      } finally {
-        await fd.close();
-      }
+      const embedded = await readPhotoFile(photo, original);
+      project = { kind: "project", photo: embedded, overrides: userFields };
     }
     const header = project
       ? { ...manifest, formatVersion: 2, ...project }
@@ -313,21 +397,7 @@ export async function packPreset(
       }
     }
     const staged = path.join(staging, "output.kaiphoto");
-    const zip = new yazl.ZipFile();
-    zip.on("error", (error) => zip.outputStream.destroy(error));
-    const options = { mtime: new Date("2000-01-01T12:00:00Z"), mode: 0o100644 };
-    for (const [name, data] of entries) zip.addBuffer(data, name, options);
-    if (project)
-      zip.addFile(original, project.photo.path, {
-        ...options,
-        compress: false,
-      });
-    const writing = pipeline(
-      zip.outputStream,
-      createWriteStream(staged, { flags: "wx" }),
-    );
-    zip.end();
-    await writing;
+    await writeBundle(staged, entries, original, project);
     await publishNew(staged, output);
     return {
       output,
@@ -348,22 +418,35 @@ export async function runPreset(args, v, result) {
   const [action, file] = args;
   if (args.length !== 2 || !["inspect", "pack"].includes(action))
     usage(
-      "用法：kaiprint preset inspect 文件 或 preset pack template.json -o 文件.kaiphoto",
+      "用法：kaiprint preset inspect 文件 或 preset pack template.json [-o 文件.kaiphoto]",
     );
   const allowed =
     action === "pack"
-      ? ["json", "output", "assets", "preview", "photo", "overrides"]
+      ? ["json", "output", "name", "assets", "preview", "photo", "overrides"]
       : ["json"];
   if (Object.keys(v).some((key) => !allowed.includes(key)))
     usage("无效的 preset 选项");
-  if (action === "pack" && !v.output) usage("pack 需要 -o 指定输出文件");
-  const data =
-    action === "pack"
-      ? await packPreset(file, path.resolve(v.output), v.assets, v.preview, {
-          photo: v.photo,
-          overrides: v.overrides,
-        })
-      : await inspectPreset(file);
+  if (v.output === "") usage("-o 需要文件路径");
+  if (v.output !== undefined && v.name !== undefined)
+    usage("--name 用于存入用户库，不能与 -o 同时指定");
+  let data;
+  if (action === "inspect") data = await inspectPreset(file);
+  else if (v.output) {
+    data = await packPreset(file, path.resolve(v.output), v.assets, v.preview, {
+      photo: v.photo,
+      overrides: v.overrides,
+    });
+  } else {
+    const { packToLibrary } = await import("./home.js");
+    data = await packToLibrary(file, {
+      kind: v.photo ? "project" : "template",
+      name: v.name,
+      assets: v.assets,
+      preview: v.preview,
+      photo: v.photo,
+      overrides: v.overrides,
+    });
+  }
   const text = [
     data.title + " · " + data.layerCount + " 层 · " + data.format,
     ...(data.photo

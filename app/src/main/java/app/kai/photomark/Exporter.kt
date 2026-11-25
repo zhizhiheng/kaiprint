@@ -412,7 +412,7 @@ class ExportService : Service() {
     }
 
     companion object {
-        private const val CHANNEL = "exports"
+        const val CHANNEL = "exports"
         private const val NOTIFICATION_ID = 10
         private const val FINISHED_NOTIFICATION_ID = 11
         const val SHOW_JOB = "app.kai.photomark.SHOW_JOB"

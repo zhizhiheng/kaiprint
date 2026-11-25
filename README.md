@@ -6,6 +6,12 @@
 
 当前正式版为 **0.0.2**。下方 npm 安装命令和 Releases 中的 APK 对应该版本。**0.0.3 处于开发中**，下方作品文件、Web 工作台和自由创作功能对应源码版。[0.0.2 正式版](https://github.com/zhizhiheng/kaiprint/releases/tag/v0.0.2)
 
+## 0.0.3 开发版的个人库和桌面导入
+
+CLI 与 MCP 共用用户目录下的 `.kaiprint/`。通用排版归入 `templates/`，含原照的作品归入 `projects/`。命令 `kaiprint config show` 会列出当前配置与路径。Web 支持通过系统对话框选择同一个库目录。[个人库、备份和迁移](docs/user-storage.md) · [MCP 工具与配置](docs/agents.md)
+
+桌面可以打开 Photoshop PSD、Krita KRA、OpenRaster ORA 与 TIFF。设计工程使用保存的整幅合成图做底图，光印水印仍可逐层编辑。Android 可以只选这次要处理的照片；读取相册、照片地点和显示导出通知各有独立入口。[桌面样片格式与限制](docs/desktop-import.md) · [Android 权限与拒绝后的用法](docs/android-permissions.md)
+
 ## 照片与模板一起编辑（0.0.3 开发版）
 
 在 Android 编辑器或 Web 工作台保存 `.kaiphoto` 时，可选两种内容。**仅模板**保存排版、可编辑图层、字体和 Logo，适合发给别人套在自己的照片上。**照片与模板**还保存当前原始照片和逐张手填信息。接收方可以重新打开作品，改署名、挪动标志，再导出成片。发送含原片的作品会一并发送其已有 EXIF，可能包含 GPS。

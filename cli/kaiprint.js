@@ -11,12 +11,19 @@ const help = `KaiPrint · 光印
   kaiprint metadata edit 照片 --set iso=400 [--unset copyright] [-o 副本 | --in-place] [--dry-run | --confirm | --yes]
   kaiprint skill [--install 技能父目录] [--json]
   kaiprint-mcp --root 照片目录
-  kaiprint preset pack template.json -o 文件.kaiphoto [--assets 素材目录] [--preview 预览.jpg] [--photo 原照 [--overrides 字段.json]] [--json]
+  kaiprint config show | config set defaultTemplate 内置水印标识
+  kaiprint library list [--kind template|project]
+  kaiprint library add 文件.kaiphoto [--kind template|project] [--name 库内名称]
+  kaiprint library apply 模板库名称 --photo 原照 [--overrides 字段.json] [--name 新作品名 | -o 作品.kaiphoto] [--dry-run]
+  kaiprint library export 库内名称 -o 文件.kaiphoto [--kind template|project]
+  kaiprint import 设计文档 -o 底图.png [--dry-run | --yes] [--json]
+  kaiprint preset pack template.json [-o 文件.kaiphoto | --name 库内名称] [--assets 素材目录] [--preview 预览.jpg] [--photo 原照 [--overrides 字段.json]] [--json]
   kaiprint preset inspect 文件.kaiphoto [--json]
   kaiprint templates [--json]
   kaiprint inspect 照片... [选项] [--json]
   kaiprint render 照片... [选项] [--dry-run | --confirm | --yes] [--json]
 
+  preset pack 省略 -o 时存入 ~/.kaiprint/templates/，带 --photo 存入 projects/。KAIPRINT_HOME 可指定数据目录。
   --photo 原照            作品包含一张原始照片及其元数据（可能含 GPS），支持 JPEG、PNG、WebP、NEF
   -o, --output 路径       单张成片，可由 .jpg/.png/.webp 推断格式
   --out-dir 目录          批量成片目录，默认与源文件同目录
@@ -45,6 +52,8 @@ const opts = {
   photo: { type: "string" },
   overrides: { type: "string" },
   preview: { type: "string" },
+  name: { type: "string" },
+  kind: { type: "string" },
   tag: { type: "string", multiple: true },
   unset: { type: "string", multiple: true },
   "in-place": { type: "boolean" },
@@ -91,7 +100,13 @@ try {
     json = !!v.json;
     if (v.help || (!command && !v.version)) result({ help }, help);
     else if (v.version) result({ version: pkg.version }, pkg.version);
-    else if (command === "preset") {
+    else if (command === "config" || command === "library") {
+      const { runHome } = await import("./home-command.js");
+      await runHome(command, files, v, result);
+    } else if (command === "import") {
+      const { runArtwork } = await import("./artwork.js");
+      await runArtwork(files, v, result);
+    } else if (command === "preset") {
       const { runPreset } = await import("./preset.js");
       await runPreset(files, v, result);
     } else if (command === "metadata") {
@@ -117,6 +132,8 @@ try {
           "preview",
           "photo",
           "overrides",
+          "name",
+          "kind",
         ].includes(k),
       )
     )
@@ -134,6 +151,10 @@ try {
         usage("未知命令：" + command);
       if (!files.length) usage("请提供至少一张照片");
       if (v.output && files.length !== 1) usage("多张照片请使用 --out-dir");
+      if (v.template === undefined) {
+        const { readConfig } = await import("./home.js");
+        v.template = (await readConfig()).defaultTemplate;
+      }
       const { plans, opt } = await prepareWatermarks(files, v, command);
       if (command === "inspect" || v["dry-run"])
         result(

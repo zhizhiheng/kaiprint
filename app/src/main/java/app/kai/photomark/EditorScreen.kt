@@ -105,7 +105,7 @@ private enum class EditorPanel(val label: String) {
 
 @Composable
 fun EditorScreen(
-    workspace: Workspace, importLogo: () -> Unit, importFont: () -> Unit, requestLocation: () -> Unit,
+    workspace: Workspace, importLogo: () -> Unit, importFont: () -> Unit, requestLocation: () -> Unit, pickReplacement: () -> Unit,
     saveEditable: (EditableFileSnapshot, Boolean) -> Unit, export: (ExportSettings, Boolean) -> Unit,
 ) {
     val group = workspace.current ?: return
@@ -143,7 +143,7 @@ fun EditorScreen(
         choices.firstOrNull { it.kind == preferred } ?: choices.firstOrNull { it.kind != PixelKind.EMBEDDED }
             ?: choices.firstOrNull()
     }
-    val sourceResult by produceState<Result<Bitmap>?>(null, pixels) {
+    val sourceResult by produceState<Result<Bitmap>?>(null, pixels, workspace.detailsGeneration) {
         value = null
         if (pixels != null) {
             value = try {
@@ -175,12 +175,18 @@ fun EditorScreen(
         if (layer == null || panel != EditorPanel.LAYERS) moving = false
     }
 
+    val readFailed = infoResult?.isFailure == true
     val canvas: @Composable (Modifier) -> Unit = { modifier ->
         Column(modifier.background(Darkroom)) {
             PreviewStage(
                 source = source, preview = preview, layout = layout,
                 loading = infoResult == null || (pixels != null && sourceResult == null),
-                failure = if (sourceResult?.isFailure == true) "此来源暂时无法解码" else "没有可用的照片预览",
+                failure = when {
+                    readFailed -> "暂时无法读取这张照片，可重新选取并沿用当前排版"
+                    sourceResult?.isFailure == true -> "此来源暂时无法解码"
+                    else -> "没有可用的照片预览"
+                },
+                choosePhoto = if (readFailed) pickReplacement else null,
                 layer = if (moving) layer else null,
                 modifier = Modifier.fillMaxWidth().weight(1f),
                 onMove = { drag = it },
@@ -248,7 +254,7 @@ fun EditorScreen(
                                     info?.metadata ?: PhotoMetadata(), override)
                             }
                             EditorPanel.FRAME -> FramePanel(workspace, source)
-                            EditorPanel.METADATA -> MetadataPanel(workspace, group, info, pixels, requestLocation)
+                            EditorPanel.METADATA -> MetadataPanel(workspace, group, info, pixels, requestLocation, pickReplacement)
                         }
                     }
                 }
@@ -303,7 +309,7 @@ fun EditorScreen(
     }
     val currentPixels = pixels
     if (exporting && currentPixels != null) {
-        ExportOptions(workspace, info, override, requestLocation, { exporting = false }) { settings, all ->
+        ExportOptions(workspace, info, override, requestLocation, pickReplacement, { exporting = false }) { settings, all ->
             exporting = false
             export(settings, all)
         }
@@ -362,7 +368,7 @@ private fun FileModeOption(title: String, detail: String, selected: Boolean, ena
 
 @Composable
 private fun PreviewStage(
-    source: Bitmap?, preview: Bitmap?, layout: WatermarkLayout?, loading: Boolean, failure: String,
+    source: Bitmap?, preview: Bitmap?, layout: WatermarkLayout?, loading: Boolean, failure: String, choosePhoto: (() -> Unit)?,
     layer: WatermarkLayer?, modifier: Modifier, onMove: (Offset) -> Unit,
     onMoveFinished: () -> Unit, onMoveCancelled: () -> Unit,
 ) {
@@ -434,7 +440,10 @@ private fun PreviewStage(
         } else if (loading || source != null) {
             CircularProgressIndicator(Modifier.size(29.dp), strokeWidth = 2.dp)
         } else {
-            Text(failure, color = Muted, style = MaterialTheme.typography.bodyMedium)
+            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(12.dp)) {
+                Text(failure, color = Muted, style = MaterialTheme.typography.bodyMedium)
+                if (choosePhoto != null) TextButton(choosePhoto) { Text("重新选择照片") }
+            }
         }
     }
 }
@@ -682,7 +691,7 @@ private fun FramePanel(workspace: Workspace, bitmap: Bitmap?) {
 
 @Composable
 private fun MetadataPanel(
-    workspace: Workspace, group: PhotoGroup, info: PhotoInfo?, pixels: PixelChoice?, requestLocation: () -> Unit,
+    workspace: Workspace, group: PhotoGroup, info: PhotoInfo?, pixels: PixelChoice?, requestLocation: () -> Unit, selectOriginal: () -> Unit,
 ) {
     if (info == null) {
         Text("等待读取拍摄参数", color = Muted)
@@ -738,7 +747,7 @@ private fun MetadataPanel(
         }
         Text("随模板保存。单张照片可以在下方单独改写。", color = Muted,
             style = MaterialTheme.typography.bodySmall)
-        PlaceControls(workspace, info.metadata, requestLocation)
+        PlaceControls(workspace, info.metadata, requestLocation, selectOriginal)
     }
     HorizontalDivider(color = Stroke)
     if (pixels != null) {
@@ -788,11 +797,10 @@ private fun MetadataPanel(
 }
 
 @Composable
-private fun PlaceControls(workspace: Workspace, metadata: PhotoMetadata, requestLocation: () -> Unit) {
+private fun PlaceControls(workspace: Workspace, metadata: PhotoMetadata, requestLocation: () -> Unit, selectOriginal: () -> Unit) {
     val template = workspace.draft.template
     ChoiceMenu("地点来源", template.place, PlaceStyle.entries, PlaceStyle::label) {
         workspace.place(it)
-        if (it != PlaceStyle.MANUAL) requestLocation()
     }
     val resolved by produceState<String?>(null, template.place, metadata) {
         value = withContext(Dispatchers.IO) { workspace.app.renderer.place(template, metadata) }
@@ -806,6 +814,21 @@ private fun PlaceControls(workspace: Workspace, metadata: PhotoMetadata, request
         else -> "这张照片印「$resolved」。精确坐标是否写入成片，在导出时单独选择。"
     }
     Text(note, color = Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("place-note"))
+    if (template.place != PlaceStyle.MANUAL && !metadata.hasLocation) {
+        LocationOptions(workspace, workspace.current?.hasIndexedPhoto() == true, requestLocation, selectOriginal)
+    }
+}
+
+@Composable
+private fun LocationOptions(workspace: Workspace, indexed: Boolean, requestLocation: () -> Unit, selectOriginal: (() -> Unit)?) {
+    if (selectOriginal != null && workspace.current?.primary?.uri?.startsWith("content:") == true) {
+        TextButton(onClick = selectOriginal) { Text("从文件选择本张原片") }
+    }
+    if (indexed && BuildConfig.FLAVOR == "library" && !workspace.locationAccess) {
+        TextButton(onClick = requestLocation) {
+            Text(if (workspace.access == LibraryAccess.PARTIAL) "管理相册与地点权限" else "允许读取照片内的拍摄地点")
+        }
+    }
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -1057,7 +1080,7 @@ private fun Palette(label: String, selected: String, sampled: List<String> = emp
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ExportOptions(workspace: Workspace, info: PhotoInfo?, overrides: Map<MetadataField, String>,
-                          requestLocation: () -> Unit, close: () -> Unit,
+                          requestLocation: () -> Unit, selectOriginal: () -> Unit, close: () -> Unit,
                           output: (ExportSettings, Boolean) -> Unit) {
     var settings by remember { mutableStateOf(workspace.exportSettings) }
     var all by remember { mutableStateOf(workspace.editing.size > 1) }
@@ -1070,7 +1093,7 @@ private fun ExportOptions(workspace: Workspace, info: PhotoInfo?, overrides: Map
         }
     }
     val current = plan?.getOrNull()
-    val summary by produceState<ExportSummary?>(null, settings, all, workspace.draft) {
+    val summary by produceState<ExportSummary?>(null, settings, all, workspace.draft, workspace.detailsGeneration) {
         value = null
         if (all && workspace.editing.size > 1) value = workspace.exportSummary(settings, true)
     }
@@ -1111,7 +1134,11 @@ private fun ExportOptions(workspace: Workspace, info: PhotoInfo?, overrides: Map
                 if (settings.format != OutputFormat.TIFF) {
                     Toggle("在文件中保留拍摄位置（GPS）", settings.keepLocation) {
                         settings = settings.copy(keepLocation = it)
-                        if (it) requestLocation()
+                    }
+                    if (settings.keepLocation) {
+                        val indexed = if (all && workspace.editing.size > 1) workspace.editing.any { it.hasIndexedPhoto() }
+                            else group.hasIndexedPhoto() && info?.metadata?.hasLocation != true
+                        LocationOptions(workspace, indexed, requestLocation, selectOriginal.takeIf { info?.metadata?.hasLocation != true })
                     }
                 }
                 Toggle("把手填的器材和参数写入文件", settings.writeManual) { settings = settings.copy(writeManual = it) }

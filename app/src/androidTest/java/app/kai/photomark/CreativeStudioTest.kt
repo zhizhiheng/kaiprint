@@ -155,6 +155,52 @@ class CreativeStudioTest {
         }
     }
 
+    @Test fun reselectingAnUnavailablePhotoPreservesTheBatchAndManualLocation() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        val workspace = compose.runOnIdle { ViewModelProvider(compose.activity)[Workspace::class.java] }
+        val original = File.createTempFile("chooser-", ".jpg", context.cacheDir)
+        try {
+            val bitmap = Bitmap.createBitmap(30, 20, Bitmap.Config.ARGB_8888)
+            original.outputStream().use { bitmap.compress(Bitmap.CompressFormat.JPEG, 95, it) }
+            bitmap.recycle()
+            androidx.exifinterface.media.ExifInterface(original).apply { setLatLong(31.23, 121.47); saveAttributes() }
+            val missing = PhotoGroup(PhotoSource("content://media/external/images/media/9223372036854775806", "old.jpg", "", ""))
+            val other = PhotoGroup(PhotoSource("file:///missing-other.jpg", "other.jpg", "", ""))
+            val notes = mapOf(MetadataField.LOCATION to "手填地点", MetadataField.ISO to "")
+            compose.runOnIdle { workspace.begin(listOf(missing, other), Templates.gallery, mapOf(missing.id to notes)) }
+            val choose = compose.onNodeWithText("重新选择照片")
+            compose.waitUntilAtLeastOneExists(hasText("重新选择照片"), 15_000)
+            fun select(code: Int, result: Intent?) {
+                val filter = IntentFilter(Intent.ACTION_OPEN_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    addDataType("*/*")
+                }
+                val monitor = instrumentation.addMonitor(filter, Instrumentation.ActivityResult(code, result), true)
+                try {
+                    choose.performClick()
+                    compose.waitForIdle()
+                    assertEquals(1, monitor.hits)
+                } finally { instrumentation.removeMonitor(monitor) }
+            }
+            select(Activity.RESULT_CANCELED, null)
+            compose.runOnIdle {
+                assertEquals(missing.id, workspace.current?.id)
+                assertEquals(notes, workspace.draft.overrides[missing.id])
+            }
+            val uri = Uri.fromFile(original)
+            select(Activity.RESULT_OK, Intent().setData(uri))
+            compose.waitUntil(15_000) { workspace.current?.id == uri.toString() }
+            val group = compose.runOnIdle {
+                assertEquals(other.id, workspace.editing[1].id)
+                assertEquals(notes, workspace.draft.overrides[uri.toString()])
+                assertEquals(Templates.gallery, workspace.draft.template)
+                workspace.current!!
+            }
+            assertTrue(runBlocking { workspace.info(group) }.metadata.hasLocation)
+        } finally { original.delete() }
+    }
+
     private fun captureIfRequested(name: String) {
         if (InstrumentationRegistry.getArguments().getString("studioScreens") != "true") return
         compose.waitForIdle()

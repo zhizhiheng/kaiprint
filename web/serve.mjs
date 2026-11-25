@@ -14,6 +14,10 @@ const direct = {
   "/formats/kaiphoto-template-v1.schema.json":
     "formats/kaiphoto-template-v1.schema.json",
   "/catalog/camera.js": "cli/camera.js",
+  "/catalog/psd.js": "cli/psd.js",
+  "/catalog/merged-artwork.js": "cli/merged-artwork.js",
+  "/vendor/ag-psd/bundle.js": "node_modules/ag-psd/dist/bundle.js",
+  "/vendor/geotiff.js": "node_modules/geotiff/dist-browser/geotiff.js",
   "/catalog/places.js": "cli/places.js",
   "/catalog/models.json": "cli/models.json",
   "/vendor/exifr.js": "node_modules/exifr/dist/full.esm.mjs",

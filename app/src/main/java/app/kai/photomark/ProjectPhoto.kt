@@ -136,7 +136,7 @@ internal fun stageOriginal(context: Context, snapshot: EditableFileSnapshot): St
     try {
         val uri = Uri.parse(snapshot.photo.uri)
         val resolver = context.contentResolver
-        val stream = if (uri.authority == MediaStore.AUTHORITY && (context.applicationContext as? PhotoMarkApp)?.photos?.locationAccess == true) {
+        val stream = if (isIndexedPhoto(uri) && (context.applicationContext as? PhotoMarkApp)?.photos?.locationAccess == true) {
             runCatching { resolver.openInputStream(MediaStore.setRequireOriginal(uri)) }.getOrNull()
         } else null
         val digest = MessageDigest.getInstance("SHA-256")

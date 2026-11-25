@@ -1,4 +1,6 @@
-import { createWriteStream } from "node:fs";
+import path from "node:path";
+import { constants, createWriteStream } from "node:fs";
+import { Writable } from "node:stream";
 import { open } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { pipeline } from "node:stream/promises";
@@ -65,7 +67,7 @@ async function identifyPhoto(file) {
 }
 
 /** Keep an exact, bounded snapshot for both hashing and ZIP output. */
-export async function stagePhoto(source, destination, displayName) {
+async function measurePhoto(source, checkedFile, displayName, sink) {
   let bytes = 0;
   const digest = createHash("sha256");
   await pipeline(
@@ -78,10 +80,10 @@ export async function stagePhoto(source, destination, displayName) {
         yield chunk;
       }
     },
-    createWriteStream(destination, { flags: "wx", mode: 0o600 }),
+    sink,
   );
   if (!bytes) throw new Error("原照为空");
-  const mediaType = await identifyPhoto(destination);
+  const mediaType = await identifyPhoto(checkedFile);
   return {
     path: mediaPaths.get(mediaType),
     name: displayName,
@@ -89,4 +91,34 @@ export async function stagePhoto(source, destination, displayName) {
     bytes,
     sha256: digest.digest("hex"),
   };
+}
+
+export async function stagePhoto(source, destination, displayName) {
+  return measurePhoto(
+    source,
+    destination,
+    displayName,
+    createWriteStream(destination, { flags: "wx", mode: 0o600 }),
+  );
+}
+
+/** With a staging path, hash and keep one immutable copy for the writer. Without it, inspect without writing. */
+export async function readPhotoFile(file, staging) {
+  const fd = await open(file, constants.O_RDONLY | (constants.O_NONBLOCK || 0));
+  try {
+    const info = await fd.stat();
+    if (!info.isFile() || info.size < 1 || info.size > maxPhotoBytes)
+      throw new Error("作品原照需为不超过 256 MiB 的照片文件");
+    const stream = fd.createReadStream({ autoClose: false });
+    const name = path.basename(file);
+    if (staging) return await stagePhoto(stream, staging, name);
+    const discard = new Writable({
+      write(_chunk, _encoding, done) {
+        done();
+      },
+    });
+    return await measurePhoto(stream, file, name, discard);
+  } finally {
+    await fd.close();
+  }
 }

@@ -7,6 +7,9 @@ import { z } from "zod";
 import pkg from "../package.json" with { type: "json" };
 import { templates, fields } from "./photo.js";
 import { prepareWatermarks, save } from "./watermarks.js";
+import { readConfig } from "./home.js";
+import { artworkPlan, importArtwork } from "./artwork.js";
+import { registerLibraryTools } from "./mcp-library.js";
 import {
   originalMetadata,
   metadataPlan,
@@ -44,8 +47,13 @@ export async function startMcp(args) {
       throw new Error("路径超出照片目录");
     return p;
   }
-  async function input(file) {
+  async function readablePath(file) {
     return within(await realpath(within(path.resolve(root, file))));
+  }
+  async function input(file) {
+    const source = await readablePath(file);
+    if (!(await stat(source)).isFile()) throw new Error("请选择工作区内的文件");
+    return source;
   }
   async function output(file) {
     const target = within(path.resolve(root, file));
@@ -71,10 +79,28 @@ export async function startMcp(args) {
   server.registerTool(
     "list_templates",
     {
-      description: "列出可用水印模板、可见字段和可修改的原文件标签。",
+      description:
+        "列出可以直接渲染的内置风格、水印字段与可编辑的文件标签。个人模板和作品使用 list_library。",
       annotations: { readOnlyHint: true },
     },
     async () => response({ templates, fields, editableFields }),
+  );
+  registerLibraryTools(server, { root, input, output, readablePath, response });
+  server.registerTool(
+    "import_artwork",
+    {
+      description:
+        "读取 PSD、OpenRaster（ORA）、Krita（KRA）保存的合成图，或 TIFF 的第一幅图像。默认返回尺寸和图层处理方式，apply=true 后生成新的 PNG 底图。",
+      inputSchema: { file, output: file, apply: z.boolean().default(false) },
+      annotations: { destructiveHint: false, openWorldHint: false },
+    },
+    async (a) => {
+      const plan = await artworkPlan(
+        await input(a.file),
+        await output(a.output),
+      );
+      return response(a.apply ? await importArtwork(plan) : plan);
+    },
   );
   server.registerTool(
     "read_metadata",
@@ -120,9 +146,7 @@ export async function startMcp(args) {
         "给一张或多张照片规划或导出水印。set 只改画面文字。apply=true 才会生成成片。",
       inputSchema: {
         files: z.array(file).min(1),
-        template: z
-          .enum(["gallery", "brand-stamp", "frosted-gallery"])
-          .optional(),
+        template: z.enum(Object.keys(templates)).optional(),
         logo: z
           .enum(["model", "brand", "square", "wordmark", "none"])
           .optional(),
@@ -143,7 +167,7 @@ export async function startMcp(args) {
       if (a.output && a.files.length !== 1)
         throw new Error("批量导出请用 outDir");
       const args = {
-        template: a.template,
+        template: a.template ?? (await readConfig()).defaultTemplate,
         logo: a.logo,
         place: a.place,
         format: a.format,
