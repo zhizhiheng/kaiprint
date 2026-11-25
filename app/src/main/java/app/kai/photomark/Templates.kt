@@ -192,8 +192,124 @@ object Templates {
         ),
     )
 
+    // A starting canvas for the editor. It is an action, not an entry in the style catalog.
+    val blank = WatermarkTemplate("blank", "空白创作")
+
+    val instantPrint = WatermarkTemplate(
+        "instant-print", "即影相纸",
+        Frame(.052f, .052f, .052f, .29f, "#FFFAED", collapseEmpty = false),
+        listOf(
+            annotation("title", listOf(MetadataField.TITLE), Anchor.CENTER, size = .059f,
+                color = "#30291F", type = TypeStyle.SERIF),
+            annotation("author", listOf(MetadataField.AUTHOR), Anchor.BOTTOM_LEFT, column = LayerColumn.LEFT_HALF,
+                size = .026f, color = "#625646"),
+            annotation("date", listOf(MetadataField.DATE), Anchor.BOTTOM_RIGHT, column = LayerColumn.RIGHT_HALF,
+                size = .025f, color = "#625646", type = TypeStyle.MONO),
+        ),
+    )
+
+    val fieldPostcard = WatermarkTemplate(
+        "field-postcard", "旅行明信片",
+        Frame(.03f, .03f, .03f, .22f, "#E9F0E7"),
+        listOf(
+            annotation("place", listOf(MetadataField.LOCATION, MetadataField.TITLE), Anchor.TOP_LEFT,
+                column = LayerColumn.LEFT_HALF, size = .045f, color = "#243A35", type = TypeStyle.SERIF),
+            annotation("date", listOf(MetadataField.DATE), Anchor.BOTTOM_LEFT,
+                column = LayerColumn.LEFT_HALF, size = .026f, color = "#496157", type = TypeStyle.MONO),
+            WatermarkLayer("stamp", LayerKind.BRAND, area = LayerArea.BOTTOM, anchor = Anchor.TOP_RIGHT,
+                column = LayerColumn.RIGHT_HALF, size = .105f, margin = .025f, brandStyle = BrandStyle.SQUARE),
+            annotation("credit", listOf(MetadataField.AUTHOR, MetadataField.MODEL), Anchor.BOTTOM_RIGHT,
+                column = LayerColumn.RIGHT_HALF, size = .025f, color = "#31453F"),
+        ),
+    )
+
+    val cinemaScope = WatermarkTemplate(
+        "cinema-scope", "宽银幕",
+        Frame(top = .14f, bottom = .18f, color = "#0F1012", collapseEmpty = false),
+        listOf(
+            WatermarkLayer("brand", LayerKind.BRAND, area = LayerArea.TOP, anchor = Anchor.CENTER_LEFT,
+                column = LayerColumn.LEFT, size = .16f, margin = .046f, brandTone = BrandTone.LIGHT,
+                brandStyle = BrandStyle.MODEL),
+            annotation("lens", listOf(MetadataField.LENS), Anchor.CENTER_RIGHT, area = LayerArea.TOP,
+                column = LayerColumn.RIGHT, size = .027f, color = "#CDCFD0", type = TypeStyle.MONO),
+            annotation("title", listOf(MetadataField.TITLE), Anchor.TOP_CENTER, size = .044f,
+                color = "#FCF7EC", type = TypeStyle.SERIF).copy(margin = .023f),
+            annotation("exif", exposure, Anchor.BOTTOM_CENTER, size = .026f,
+                color = "#D4C7AE", type = TypeStyle.MONO).copy(margin = .023f, separator = Separator.SLASH),
+        ),
+    )
+
+    val filmRebate = WatermarkTemplate(
+        "film-rebate", "胶片边码",
+        layers = listOf(
+            annotation("film", listOf(MetadataField.FILM), Anchor.TOP_LEFT, area = LayerArea.PHOTO,
+                size = .032f, color = "#FFD18C", type = TypeStyle.MONO).copy(shadow = true, letterSpacing = .07f),
+            annotation("date", listOf(MetadataField.DATE), Anchor.BOTTOM_LEFT, area = LayerArea.PHOTO,
+                column = LayerColumn.LEFT_HALF, size = .033f, color = "#FFB65D", type = TypeStyle.MONO)
+                .copy(shadow = true, letterSpacing = .04f),
+            annotation("camera", listOf(MetadataField.MODEL, MetadataField.ISO), Anchor.BOTTOM_RIGHT,
+                area = LayerArea.PHOTO, column = LayerColumn.RIGHT_HALF, size = .026f, color = "#FFD18C",
+                type = TypeStyle.MONO).copy(shadow = true),
+        ),
+    )
+
+    val specimenLabel = WatermarkTemplate(
+        "specimen-label", "标本标签",
+        Frame(.36f, .04f, .04f, .04f, "#E5E2D4", hairline = true),
+        listOf(
+            annotation("title", listOf(MetadataField.TITLE), Anchor.TOP_LEFT, area = LayerArea.LEFT,
+                size = .052f, color = "#31342D", type = TypeStyle.SERIF),
+            annotation("details", listOf(MetadataField.MODEL, MetadataField.LENS), Anchor.CENTER_LEFT,
+                area = LayerArea.LEFT, size = .027f, color = "#424A3F", type = TypeStyle.MONO)
+                .copy(separator = Separator.SLASH),
+            annotation("record", listOf(MetadataField.LOCATION, MetadataField.DATE), Anchor.BOTTOM_LEFT,
+                area = LayerArea.LEFT, size = .025f, color = "#586051"),
+        ),
+    )
+
+    val halfTitle = WatermarkTemplate(
+        "half-title", "扉页题签",
+        Frame(.04f, .245f, .04f, .045f, "#F7F4F0"),
+        listOf(
+            annotation("title", listOf(MetadataField.TITLE), Anchor.TOP_LEFT, area = LayerArea.TOP,
+                size = .066f, color = "#322832", type = TypeStyle.SERIF),
+            annotation("credit", listOf(MetadataField.AUTHOR, MetadataField.LOCATION), Anchor.BOTTOM_LEFT,
+                area = LayerArea.TOP, column = LayerColumn.LEFT_HALF, size = .025f, color = "#735660"),
+            annotation("camera", listOf(MetadataField.MODEL), Anchor.BOTTOM_RIGHT, area = LayerArea.TOP,
+                column = LayerColumn.RIGHT_HALF, size = .029f, color = "#4C4147", type = TypeStyle.MONO),
+        ),
+    )
+
+    val colorMargin = WatermarkTemplate(
+        "color-margin", "色样边栏",
+        Frame(.035f, .035f, .39f, .035f, "#24262A"),
+        listOf(
+            annotation("title", listOf(MetadataField.TITLE), Anchor.TOP_LEFT, area = LayerArea.RIGHT,
+                size = .047f, color = "#F6F1E9", type = TypeStyle.SERIF),
+            WatermarkLayer("swatches", LayerKind.PALETTE, area = LayerArea.RIGHT, anchor = Anchor.CENTER,
+                size = .285f, margin = .029f, paletteStyle = PaletteStyle.BLOCKS, paletteCount = 4),
+            annotation("exif", listOf(MetadataField.MODEL, MetadataField.FOCAL, MetadataField.APERTURE),
+                Anchor.BOTTOM_LEFT, area = LayerArea.RIGHT, size = .025f, color = "#E2DFD6", type = TypeStyle.MONO),
+        ),
+    )
+
+    val frostCover = WatermarkTemplate(
+        "frost-cover", "雾面封套",
+        Frame(.12f, .105f, .12f, .125f, "#23333C", background = FrameBackground.FROSTED,
+            blur = .066f, tintStrength = .21f, corner = .025f, shadow = .035f),
+        listOf(
+            WatermarkLayer("brand", LayerKind.BRAND, area = LayerArea.TOP, anchor = Anchor.CENTER,
+                size = .16f, margin = .021f, brandStyle = BrandStyle.WORDMARK, autoGlassInk = true),
+            annotation("title", listOf(MetadataField.TITLE), Anchor.BOTTOM_LEFT, area = LayerArea.PHOTO,
+                size = .056f, type = TypeStyle.SERIF).copy(outline = true, shadow = true),
+            annotation("credit", listOf(MetadataField.AUTHOR, MetadataField.DATE), Anchor.CENTER,
+                size = .029f, type = TypeStyle.MONO).copy(autoGlassInk = true, separator = Separator.BAR),
+        ),
+    )
+
     val all = listOf(gallery, modelPlate, floatingPrint, zr, frostedGallery, frostedJournal, colorAtlas, fieldNotes,
-        archiveCard, brandStamp, signature, dark, editorial, proof)
+        archiveCard, brandStamp, signature, dark, editorial, proof, instantPrint, fieldPostcard, cinemaScope,
+        filmRebate, specimenLabel, halfTitle, colorMargin, frostCover)
 
     /**
      * A built-in template picked from the strip keeps the canvas shape, titles, credit, location choice and

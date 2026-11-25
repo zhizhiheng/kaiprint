@@ -2,9 +2,11 @@ package app.kai.photomark
 
 import android.Manifest
 import android.content.Intent
+import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.util.LruCache
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
@@ -36,6 +38,8 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
@@ -59,6 +63,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -74,6 +79,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -82,13 +88,17 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.LifecycleResumeEffect
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -136,7 +146,12 @@ class MainActivity : ComponentActivity() {
 
     private fun receive(intent: Intent?) {
         intent?.getStringExtra(ExportService.SHOW_JOB)?.let { workspace.showJob(it) }
-        workspace.receiveShared(sharedUris(intent))
+        val uris = sharedUris(intent)
+        val preset = uris.singleOrNull()?.takeIf { uri ->
+            intent?.type in setOf(PresetArchive.MIME, "image/svg+xml", "application/json") ||
+                uri.lastPathSegment.orEmpty().endsWith(".kaiphoto", ignoreCase = true)
+        }
+        if (preset != null) workspace.importPreset(preset) else workspace.receiveShared(uris)
     }
 }
 
@@ -158,8 +173,43 @@ private fun PhotoMark(workspace: Workspace) {
     val presetImport = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let(workspace::importPreset)
     }
-    var presetToExport by remember { mutableStateOf<PresetRow?>(null) }
-    val presetExport = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
+    var pendingDesign by rememberSaveable { mutableStateOf<String?>(null) }
+    var chooseDesignSource by rememberSaveable { mutableStateOf(false) }
+    val designPhoto = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        val encoded = pendingDesign
+        pendingDesign = null
+        if (uri != null && encoded != null) {
+            workspace.importForDesign(listOf(uri), storageJson.decodeFromString<WatermarkTemplate>(encoded))
+        }
+    }
+    fun openDesign(template: WatermarkTemplate) {
+        if (workspace.editing.isEmpty() && workspace.hasDraft) workspace.reopen()
+        if (workspace.editing.isNotEmpty()) {
+            workspace.apply(template)
+        } else {
+            pendingDesign = storageJson.encodeToString(template)
+            chooseDesignSource = true
+        }
+    }
+    if (chooseDesignSource) {
+        AlertDialog(
+            onDismissRequest = { chooseDesignSource = false; pendingDesign = null },
+            title = { Text("选择预览照片") },
+            text = { Text("用自己的照片排版，也可以先在示例照片上设计水印。") },
+            confirmButton = { TextButton({
+                chooseDesignSource = false
+                designPhoto.launch(arrayOf("*/*"))
+            }) { Text("选择照片") } },
+            dismissButton = { TextButton({
+                val encoded = pendingDesign
+                chooseDesignSource = false
+                pendingDesign = null
+                if (encoded != null) workspace.openSampleDesign(storageJson.decodeFromString<WatermarkTemplate>(encoded))
+            }) { Text("使用示例照片") } },
+        )
+    }
+    var presetToExport by rememberSaveable { mutableStateOf<String?>(null) }
+    val presetExport = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument(PresetArchive.MIME)) { uri ->
         if (uri != null) presetToExport?.let { workspace.exportPreset(it, uri) }
         presetToExport = null
     }
@@ -233,9 +283,9 @@ private fun PhotoMark(workspace: Workspace) {
                         context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED
                     ) notification.launch(Manifest.permission.POST_NOTIFICATIONS)
                 }
-                Screen.PRESETS -> PresetScreen(workspace,
-                    { presetImport.launch(arrayOf("application/zip", "application/octet-stream")) },
-                    { preset -> presetToExport = preset; presetExport.launch("光印-${preset.name}.zip") })
+                Screen.PRESETS -> PresetScreen(workspace, ::openDesign,
+                    { presetImport.launch(arrayOf("*/*")) },
+                    { preset -> presetToExport = preset.id; presetExport.launch("光印-${preset.name}.kaiphoto") })
                 Screen.EXPORTS -> ExportScreen(workspace) { diagnostics.launch("photomark-diagnostics.csv") }
             }
         }
@@ -405,41 +455,91 @@ internal fun Thumbnail(workspace: Workspace, photo: PhotoGroup, modifier: Modifi
 }
 
 @Composable
-private fun PresetScreen(workspace: Workspace, importArchive: () -> Unit, export: (PresetRow) -> Unit) {
+private fun PresetScreen(workspace: Workspace, openDesign: (WatermarkTemplate) -> Unit, importArchive: () -> Unit, export: (PresetRow) -> Unit) {
     val presets by workspace.presets.collectAsState()
+    val focus = LocalFocusManager.current
+    var query by rememberSaveable { mutableStateOf("") }
+    var filter by rememberSaveable { mutableStateOf(Templates.Kind.ALL) }
+    // Index new or changed rows off the UI thread. Filtering and thumbnails share the decoded template.
+    val decoded by produceState<Map<PresetRow, WatermarkTemplate?>>(emptyMap(), presets) {
+        val previous = value
+        value = withContext(Dispatchers.Default) {
+            presets.associateWith { row ->
+                if (row in previous) previous[row] else
+                    runCatching { storageJson.decodeFromString<WatermarkTemplate>(row.template) }.getOrNull()
+            }
+        }
+    }
+    val term = query.trim()
+    val personal = remember(presets, decoded, term, filter) {
+        presets.filter { row ->
+            row.name.contains(term, ignoreCase = true) && row in decoded &&
+                (filter == Templates.Kind.ALL || decoded[row]?.let(Templates::kind) == filter)
+        }
+    }
+    val builtIns = remember(term, filter) {
+        Templates.all.filter {
+            it.title.contains(term, ignoreCase = true) && (filter == Templates.Kind.ALL || Templates.kind(it) == filter)
+        }
+    }
     var delete by remember { mutableStateOf<PresetRow?>(null) }
     Column(Modifier.fillMaxSize()) {
-        AppHeading("水印预设") { TextButton(importArchive) { Text("导入预设包") } }
+        AppHeading("水印预设", ".kaiphoto · ZIP · JSON · SVG") { TextButton(importArchive) { Text("导入模板") } }
         LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            if (presets.isNotEmpty()) item { Text("我的预设", style = MaterialTheme.typography.titleMedium) }
-            items(presets, key = PresetRow::id) { preset ->
+            item {
+                OutlinedButton(onClick = { openDesign(Templates.blank) }, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Default.Add, null)
+                    Text("空白创作", modifier = Modifier.padding(start = 8.dp))
+                }
+            }
+            item {
+                OutlinedTextField(query, { query = it }, Modifier.fillMaxWidth(), label = { Text("搜索预设名称") },
+                    singleLine = true, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(onSearch = { focus.clearFocus() }), trailingIcon = {
+                        if (query.isNotEmpty()) IconButton({ query = "" }) { Icon(Icons.Default.Close, "清除搜索") }
+                    })
+            }
+            item {
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    items(Templates.Kind.entries, key = { it.name }) { kind ->
+                        FilterChip(filter == kind, { filter = kind }, { Text(kind.label) })
+                    }
+                }
+            }
+            if (personal.isEmpty() && builtIns.isEmpty() && decoded.keys.containsAll(presets)) item {
+                Column(Modifier.fillMaxWidth().padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("没有符合条件的预设", color = Muted)
+                    TextButton({ query = ""; filter = Templates.Kind.ALL }) { Text("清除筛选") }
+                }
+            }
+            if (personal.isNotEmpty()) item { Text("我的预设", style = MaterialTheme.typography.titleMedium) }
+            items(personal, key = PresetRow::id) { preset ->
                 var menu by remember { mutableStateOf(false) }
-                Surface(onClick = { workspace.loadPreset(preset) }, shape = RoundedCornerShape(15.dp), color = Panel) {
+                val template = decoded[preset]
+                Surface(onClick = {
+                    if (template != null) openDesign(template) else workspace.message = "此预设暂时无法打开"
+                }, shape = RoundedCornerShape(15.dp), color = Panel) {
                     Row(Modifier.fillMaxWidth().padding(start = 15.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text(preset.name, Modifier.weight(1f), color = Ink)
+                        if (template != null) PresetThumbnail(workspace, template)
+                        Text(preset.name, Modifier.weight(1f).padding(start = 12.dp), color = Ink)
                         Box {
                             IconButton({ menu = true }) { Icon(Icons.Default.MoreVert, "管理 ${preset.name}") }
                             DropdownMenu(menu, { menu = false }) {
-                                DropdownMenuItem(text = { Text("导出预设包") }, onClick = { menu = false; export(preset) })
+                                DropdownMenuItem(text = { Text("导出 .kaiphoto") }, onClick = { menu = false; export(preset) })
                                 DropdownMenuItem(text = { Text("删除预设") }, onClick = { menu = false; delete = preset })
                             }
                         }
                     }
                 }
             }
-            item { Text("内置模板", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(vertical = 8.dp)) }
-            items(Templates.all, key = WatermarkTemplate::id) { template ->
-                val sample = Color(color(template.frame.color, 0xFF191A20.toInt()))
-                val framed = template.frame != Frame()
-                Surface(onClick = {
-                    if (workspace.editing.isNotEmpty()) workspace.apply(template)
-                    else workspace.message = "选照片后可使用「${template.title}」"
-                }, shape = RoundedCornerShape(15.dp), color = Panel) {
+            if (builtIns.isNotEmpty()) item {
+                Text("内置模板", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(vertical = 8.dp))
+            }
+            items(builtIns, key = WatermarkTemplate::id) { template ->
+                Surface(onClick = { openDesign(template) }, shape = RoundedCornerShape(15.dp), color = Panel) {
                     Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(14.dp),
                         verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.size(55.dp, 44.dp).clip(RoundedCornerShape(6.dp)).background(if (framed) sample else Raised)
-                            .padding(if (framed) 6.dp else 2.dp)
-                            .background(if (framed) Raised else sample, RoundedCornerShape(3.dp)))
+                        PresetThumbnail(workspace, template)
                         Text(template.title, color = Ink)
                     }
                 }
@@ -451,6 +551,24 @@ private fun PresetScreen(workspace: Workspace, importArchive: () -> Unit, export
             text = { Text("删除「${preset.name}」？") },
             confirmButton = { TextButton({ workspace.deletePreset(preset.id); delete = null }) { Text("删除", color = Danger) } },
             dismissButton = { TextButton({ delete = null }) { Text("取消") } })
+    }
+}
+
+private val presetThumbnails = LruCache<WatermarkTemplate, Bitmap>(32)
+
+@Composable
+private fun PresetThumbnail(workspace: Workspace, template: WatermarkTemplate) {
+    val bitmap by produceState(presetThumbnails.get(template), template) {
+        value = presetThumbnails.get(template) ?: withContext(Dispatchers.Default) {
+            try {
+                workspace.app.renderer.sample(template, edge = 220).also { presetThumbnails.put(template, it) }
+            } catch (_: IllegalArgumentException) {
+                null
+            }
+        }
+    }
+    Box(Modifier.size(78.dp, 56.dp).clip(RoundedCornerShape(5.dp)).background(Raised)) {
+        bitmap?.let { Image(it.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Fit) }
     }
 }
 

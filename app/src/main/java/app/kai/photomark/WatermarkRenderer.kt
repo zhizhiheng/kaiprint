@@ -282,8 +282,10 @@ class WatermarkRenderer(private val context: Context, private val photos: PhotoR
      * no photo of the person sharing the preset.
      */
     fun sample(template: WatermarkTemplate, edge: Int = 1200): Bitmap {
-        val photo = Bitmap.createBitmap(1500, 1000, Bitmap.Config.ARGB_8888)
+        val width = (edge.coerceIn(2, 1200) * 3 / 2).coerceAtMost(1500)
+        val photo = Bitmap.createBitmap(width, width * 2 / 3, Bitmap.Config.ARGB_8888)
         Canvas(photo).apply {
+            scale(photo.width / 1500f, photo.height / 1000f)
             drawPaint(Paint().apply {
                 shader = android.graphics.LinearGradient(0f, 0f, 0f, 1000f,
                     intArrayOf(0xFF2E4A62.toInt(), 0xFFC98B5B.toInt(), 0xFF3B3A36.toInt()), floatArrayOf(0f, .62f, 1f),
@@ -489,7 +491,7 @@ class WatermarkRenderer(private val context: Context, private val photos: PhotoR
             }
             LayerKind.TEXT, LayerKind.EXIF -> {
                 val parts = if (layer.kind == LayerKind.TEXT) listOf(layer.text.trim())
-                    else metadata.parts(layer.fields, overrides)
+                    else metadata.parts(layer.fields.take(MetadataField.entries.size), overrides)
                 if (parts.all(String::isBlank)) return null
                 textMarker(parts, layer, size, availableWidth, availableHeight, alpha, adaptedInk)
             }
@@ -581,8 +583,9 @@ class WatermarkRenderer(private val context: Context, private val photos: PhotoR
 
     private fun drawTiled(canvas: Canvas, area: PixelRect, layer: WatermarkLayer, marker: Marker, reference: Float) {
         val state = canvas.save()
-        val cx = (area.left + area.right) / 2f + area.width * layer.x
-        val cy = (area.top + area.bottom) / 2f + area.height * layer.y
+        // Older preset libraries may contain offsets outside the editable canvas.
+        val cx = (area.left + area.right) / 2f + area.width * layer.x.coerceIn(-1f, 1f)
+        val cy = (area.top + area.bottom) / 2f + area.height * layer.y.coerceIn(-1f, 1f)
         canvas.rotate(layer.rotation, cx, cy)
         val radius = hypot(area.width, area.height) + max(area.width, area.height) * .3f
         val stepX = max(marker.width + reference * max(.07f, layer.margin * 2f), radius / 26)

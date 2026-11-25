@@ -10,6 +10,22 @@ kaiprint templates
 
 完整的 0.0.2 通过个人作用域包发布。原先的无作用域 `kaiprint@0.0.2` 是基础水印版，npm 的同名同版本内容已固定。如全局安装提示 `kaiprint` 命令已存在，可继续保留旧安装，并用 `npx --yes --package=@kkellyoffical/kaiprint@0.0.2 -- kaiprint` 运行新版。元数据工具随包分发 ExifTool，Linux 和 macOS 需要可用的 Perl，Windows 使用随包的可执行文件。[npm 发布规则](https://docs.npmjs.com/cli/v11/commands/npm-publish/)
 
+## 在电脑上制作 KaiPhoto
+
+`preset` 命令属于 **0.0.3 开发版**。在开发版仓库根目录安装依赖，然后用仓库里的 CLI 打包。下面的「旅途手记」有标题、署名与地点、机型标志、拍摄参数四个图层。可以先改 JSON 里的 `title` 和 `captions.TITLE` 再打包。[示例源文件](../examples/presets/travel-notebook.json) · [可导入的成品](../examples/presets/travel-notebook.kaiphoto)
+
+```sh
+npm ci
+node cli/kaiprint.js preset pack examples/presets/travel-notebook.json -o my-travel.kaiphoto --json
+node cli/kaiprint.js preset inspect my-travel.kaiphoto --json
+```
+
+`pack` 接受原生模板 JSON，按 v1 Schema 校验。图层引用自定义 PNG 或字体时，默认从模板旁的 `assets/` 目录读取，也可用 `--assets 目录` 指定路径。包只收录引用到的素材。`--preview cover.jpg` 可附上 JPEG 预览。输出路径须以 `.kaiphoto` 结尾，请为每次新导出指定空闲文件名。[模板字段与限制](preset-format.md) · [JSON Schema](../formats/kaiphoto-template-v1.schema.json)
+
+`inspect` 接受 `.kaiphoto` 和旧版光印 ZIP。加 `--json` 可取到 `format`（`kaiphoto-v1` 或 `legacy-zip`）、`title`、`id`、`layerCount`、`assets`、`missingAssets` 和 `hasPreview`。例如代理可以先检查 `missingAssets`，再把完整的包交给摄影师。
+
+要用这份文件出图，在 Android 开发版的「预设 → 导入模板」选中它，再选照片套用。CLI 和 MCP 的 `render` 目前接受下文的三个内置排版标识。
+
 ## 读取原始拍摄信息
 
 ```sh

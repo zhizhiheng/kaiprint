@@ -1,0 +1,404 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "KaiPhoto v1 editable template",
+  "type": "object",
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "title": {
+      "type": "string",
+      "pattern": "\\S",
+      "maxLength": 60
+    },
+    "frame": {
+      "$ref": "#/$defs/Frame"
+    },
+    "layers": {
+      "type": "array",
+      "maxItems": 24,
+      "items": {
+        "$ref": "#/$defs/Layer"
+      }
+    },
+    "captions": {
+      "type": "object",
+      "propertyNames": {
+        "$ref": "#/$defs/MetadataField"
+      },
+      "additionalProperties": {
+        "type": "string",
+        "maxLength": 120
+      }
+    },
+    "place": {
+      "$ref": "#/$defs/PlaceStyle"
+    },
+    "dateStyle": {
+      "$ref": "#/$defs/DateStyle"
+    }
+  },
+  "required": [
+    "id",
+    "title"
+  ],
+  "$defs": {
+    "FrameRatio": {
+      "enum": [
+        "ORIGINAL",
+        "SQUARE",
+        "PORTRAIT",
+        "THREE_FOUR",
+        "TWO_THREE",
+        "STORY",
+        "FOUR_THREE",
+        "THREE_TWO",
+        "WIDE"
+      ]
+    },
+    "FrameBackground": {
+      "enum": [
+        "SOLID",
+        "FROSTED"
+      ]
+    },
+    "LayerKind": {
+      "enum": [
+        "TEXT",
+        "BRAND",
+        "LOGO",
+        "EXIF",
+        "LINE",
+        "PALETTE"
+      ]
+    },
+    "PaletteStyle": {
+      "enum": [
+        "STRIP",
+        "BLOCKS"
+      ]
+    },
+    "LayerArea": {
+      "enum": [
+        "PHOTO",
+        "BOTTOM",
+        "TOP",
+        "LEFT",
+        "RIGHT",
+        "CANVAS"
+      ]
+    },
+    "LayerColumn": {
+      "enum": [
+        "FULL",
+        "LEFT",
+        "RIGHT",
+        "LEFT_HALF",
+        "RIGHT_HALF"
+      ]
+    },
+    "Anchor": {
+      "enum": [
+        "TOP_LEFT",
+        "TOP_CENTER",
+        "TOP_RIGHT",
+        "CENTER_LEFT",
+        "CENTER",
+        "CENTER_RIGHT",
+        "BOTTOM_LEFT",
+        "BOTTOM_CENTER",
+        "BOTTOM_RIGHT"
+      ]
+    },
+    "TypeStyle": {
+      "enum": [
+        "SANS",
+        "SERIF",
+        "MONO"
+      ]
+    },
+    "MetadataField": {
+      "enum": [
+        "MAKE",
+        "MODEL",
+        "LENS",
+        "FOCAL",
+        "APERTURE",
+        "SHUTTER",
+        "ISO",
+        "DATE",
+        "EXPOSURE_BIAS",
+        "FOCAL_EQUIVALENT",
+        "FILM",
+        "TITLE",
+        "AUTHOR",
+        "LOCATION"
+      ]
+    },
+    "Separator": {
+      "enum": [
+        "DOT",
+        "BAR",
+        "SLASH",
+        "DASH",
+        "SPACE"
+      ]
+    },
+    "DateStyle": {
+      "enum": [
+        "ORIGINAL",
+        "MINUTE",
+        "DATE",
+        "DOTTED",
+        "SLASHED",
+        "CHINESE",
+        "ENGLISH",
+        "STAMP"
+      ]
+    },
+    "PlaceStyle": {
+      "enum": [
+        "MANUAL",
+        "CITY",
+        "CITY_COUNTRY",
+        "COORDINATES"
+      ]
+    },
+    "BrandMark": {
+      "enum": [
+        "AUTO",
+        "NONE",
+        "NIKON",
+        "NIKON_Z",
+        "CANON",
+        "SONY",
+        "SONY_ALPHA",
+        "FUJIFILM",
+        "LUMIX",
+        "PANASONIC",
+        "LEICA",
+        "OM_SYSTEM",
+        "OLYMPUS",
+        "PENTAX",
+        "RICOH",
+        "HASSELBLAD",
+        "DJI",
+        "SIGMA",
+        "APPLE",
+        "GOPRO",
+        "INSTA360",
+        "HUAWEI",
+        "XIAOMI",
+        "SAMSUNG",
+        "OPPO",
+        "VIVO",
+        "HONOR",
+        "GOOGLE",
+        "ONEPLUS",
+        "MOTOROLA",
+        "NOKIA",
+        "ASUS"
+      ]
+    },
+    "BrandTone": {
+      "enum": [
+        "ORIGINAL",
+        "LIGHT",
+        "DARK"
+      ]
+    },
+    "BrandStyle": {
+      "enum": [
+        "ORIGINAL",
+        "WORDMARK",
+        "SYMBOL",
+        "SQUARE",
+        "MODEL"
+      ]
+    },
+    "Frame": {
+      "type": "object",
+      "properties": {
+        "left": {
+          "$ref": "#/$defs/Float"
+        },
+        "top": {
+          "$ref": "#/$defs/Float"
+        },
+        "right": {
+          "$ref": "#/$defs/Float"
+        },
+        "bottom": {
+          "$ref": "#/$defs/Float"
+        },
+        "blur": {
+          "$ref": "#/$defs/Float"
+        },
+        "tintStrength": {
+          "$ref": "#/$defs/Float"
+        },
+        "corner": {
+          "$ref": "#/$defs/Float"
+        },
+        "shadow": {
+          "$ref": "#/$defs/Float"
+        },
+        "color": {
+          "type": "string"
+        },
+        "ratio": {
+          "$ref": "#/$defs/FrameRatio"
+        },
+        "background": {
+          "$ref": "#/$defs/FrameBackground"
+        },
+        "collapseEmpty": {
+          "type": "boolean"
+        },
+        "hairline": {
+          "type": "boolean"
+        }
+      }
+    },
+    "Layer": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "$ref": "#/$defs/LayerKind"
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 240
+        },
+        "fields": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MetadataField"
+          },
+          "maxItems": 14
+        },
+        "area": {
+          "$ref": "#/$defs/LayerArea"
+        },
+        "anchor": {
+          "$ref": "#/$defs/Anchor"
+        },
+        "column": {
+          "$ref": "#/$defs/LayerColumn"
+        },
+        "type": {
+          "$ref": "#/$defs/TypeStyle"
+        },
+        "brand": {
+          "$ref": "#/$defs/BrandMark"
+        },
+        "brandTone": {
+          "$ref": "#/$defs/BrandTone"
+        },
+        "brandStyle": {
+          "$ref": "#/$defs/BrandStyle"
+        },
+        "paletteStyle": {
+          "$ref": "#/$defs/PaletteStyle"
+        },
+        "separator": {
+          "$ref": "#/$defs/Separator"
+        },
+        "x": {
+          "type": "number",
+          "minimum": -1,
+          "maximum": 1
+        },
+        "y": {
+          "type": "number",
+          "minimum": -1,
+          "maximum": 1
+        },
+        "size": {
+          "$ref": "#/$defs/Float"
+        },
+        "margin": {
+          "$ref": "#/$defs/Float"
+        },
+        "opacity": {
+          "$ref": "#/$defs/Float"
+        },
+        "rotation": {
+          "$ref": "#/$defs/Float"
+        },
+        "letterSpacing": {
+          "$ref": "#/$defs/Float"
+        },
+        "bold": {
+          "type": "boolean"
+        },
+        "outline": {
+          "type": "boolean"
+        },
+        "shadow": {
+          "type": "boolean"
+        },
+        "tile": {
+          "type": "boolean"
+        },
+        "visible": {
+          "type": "boolean"
+        },
+        "autoGlassInk": {
+          "type": "boolean"
+        },
+        "autoPhotoInk": {
+          "type": "boolean"
+        },
+        "reserveBrandSpace": {
+          "type": "boolean"
+        },
+        "color": {
+          "type": "string"
+        },
+        "background": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "paletteCount": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "logoFile": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[A-Za-z0-9_-]{1,80}\\.png$"
+        },
+        "fontFile": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[A-Za-z0-9_-]{1,80}\\.(ttf|otf)$"
+        }
+      },
+      "required": [
+        "id",
+        "kind"
+      ]
+    },
+    "Float": {
+      "type": "number",
+      "minimum": -3.4028235e+38,
+      "maximum": 3.4028235e+38
+    }
+  }
+}

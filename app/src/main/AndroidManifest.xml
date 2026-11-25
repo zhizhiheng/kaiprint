@@ -24,6 +24,26 @@
                 <data android:scheme="content" />
                 <data android:mimeType="image/*" />
             </intent-filter>
+            <intent-filter android:label="@string/open_template">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" />
+                <data android:mimeType="application/vnd.kaiprint.kaiphoto+zip" />
+            </intent-filter>
+            <intent-filter android:label="@string/open_template">
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/vnd.kaiprint.kaiphoto+zip" />
+            </intent-filter>
+            <intent-filter android:label="@string/open_template">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" />
+                <data android:host="*" />
+                <data android:pathPattern=".*\\.kaiphoto" />
+                <data android:mimeType="application/octet-stream" />
+                <data android:mimeType="application/zip" />
+            </intent-filter>
         </activity>
         <service android:name=".ExportService" android:exported="false"
             android:foregroundServiceType="dataSync|mediaProcessing" />

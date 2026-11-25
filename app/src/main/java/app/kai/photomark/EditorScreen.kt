@@ -101,12 +101,22 @@ fun EditorScreen(
     export: (ExportSettings, Boolean) -> Unit,
 ) {
     val group = workspace.current ?: return
-    var panel by remember { mutableStateOf(EditorPanel.TEMPLATES) }
+    var panel by remember {
+        mutableStateOf(if (workspace.draft.template.id == Templates.blank.id) EditorPanel.LAYERS else EditorPanel.TEMPLATES)
+    }
     var saving by remember { mutableStateOf(false) }
     var exporting by remember { mutableStateOf(false) }
     var moving by remember { mutableStateOf(false) }
     var drag by remember(group.id, workspace.activeLayer) { mutableStateOf(Offset.Zero) }
     val draft = workspace.draft
+    val presets by workspace.presets.collectAsState()
+    val savedPreset = presets.firstOrNull { it.id == draft.template.id }
+    val saveActions: @Composable () -> Unit = {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            if (savedPreset != null) TextButton({ workspace.updatePreset(savedPreset) }) { Text("更新此预设") }
+            TextButton({ saving = true }) { Text(if (savedPreset == null) "保存为预设" else "另存为") }
+        }
+    }
     val infoResult by produceState<Result<PhotoInfo>?>(null, group, workspace.detailsGeneration) {
         value = null
         value = try {
@@ -213,9 +223,18 @@ fun EditorScreen(
                 Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())
                     .padding(horizontal = 16.dp, vertical = 9.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     when (panel) {
-                        EditorPanel.TEMPLATES -> TemplatePanel(workspace, source, pixels, info?.metadata, override) { saving = true }
-                        EditorPanel.LAYERS -> LayersPanel(workspace, layer, moving, { moving = it }, importLogo, importFont,
-                            info?.metadata ?: PhotoMetadata(), override)
+                        EditorPanel.TEMPLATES -> {
+                            TemplatePanel(workspace, source, pixels, info?.metadata, override, presets) {
+                                workspace.apply(Templates.blank)
+                                panel = EditorPanel.LAYERS
+                            }
+                            saveActions()
+                        }
+                        EditorPanel.LAYERS -> {
+                            saveActions()
+                            LayersPanel(workspace, layer, moving, { moving = it }, importLogo, importFont,
+                                info?.metadata ?: PhotoMetadata(), override)
+                        }
                         EditorPanel.FRAME -> FramePanel(workspace, source)
                         EditorPanel.METADATA -> MetadataPanel(workspace, group, info, pixels, requestLocation)
                     }
@@ -226,7 +245,7 @@ fun EditorScreen(
 
     if (saving) {
         var name by remember { mutableStateOf("") }
-        AlertDialog(onDismissRequest = { saving = false }, title = { Text("保存水印预设") },
+        AlertDialog(onDismissRequest = { saving = false }, title = { Text(if (savedPreset == null) "保存水印预设" else "另存为新预设") },
             text = { OutlinedTextField(name, { name = it.take(60) }, label = { Text("预设名称") }, singleLine = true) },
             confirmButton = { Button({ workspace.savePreset(name); saving = false }, enabled = name.isNotBlank()) { Text("保存") } },
             dismissButton = { TextButton({ saving = false }) { Text("取消") } })
@@ -322,17 +341,26 @@ private fun PreviewStage(
 @Composable
 private fun TemplatePanel(
     workspace: Workspace, source: Bitmap?, pixels: PixelChoice?, metadata: PhotoMetadata?,
-    overrides: Map<MetadataField, String>, save: () -> Unit,
+    overrides: Map<MetadataField, String>, presets: List<PresetRow>, createBlank: () -> Unit,
 ) {
-    val presets by workspace.presets.collectAsState()
     var filter by remember { mutableStateOf(Templates.Kind.ALL) }
-    val templates = (Templates.all + presets.mapNotNull {
-        runCatching { storageJson.decodeFromString<WatermarkTemplate>(it.template) }.getOrNull()
-    }).filter { filter == Templates.Kind.ALL || Templates.kind(it) == filter }
+    var personal by remember { mutableStateOf(false) }
+    val saved = remember(presets) {
+        presets.mapNotNull { runCatching { storageJson.decodeFromString<WatermarkTemplate>(it.template) }.getOrNull() }
+    }
+    val templates = if (personal && saved.isNotEmpty()) saved else
+        (Templates.all + saved).filter { filter == Templates.Kind.ALL || Templates.kind(it) == filter }
     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).testTag("template-filter"),
-        horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+        OutlinedButton(createBlank) { Text("空白创作", maxLines = 1) }
+        if (saved.isNotEmpty()) {
+            FilterChip(personal, { personal = true }, { Text("我的预设", maxLines = 1) })
+        }
         for (kind in Templates.Kind.entries) {
-            FilterChip(filter == kind, { filter = kind }, { Text(kind.label, maxLines = 1) })
+            FilterChip((!personal || saved.isEmpty()) && filter == kind, {
+                personal = false
+                filter = kind
+            }, { Text(kind.label, maxLines = 1) })
         }
     }
     val current = workspace.draft.template
@@ -362,10 +390,7 @@ private fun TemplatePanel(
             }
         }
     }
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.weight(1f)) { PostTargets(workspace) }
-        TextButton(save) { Text("保存为预设") }
-    }
+    PostTargets(workspace)
 }
 
 @Composable
@@ -408,18 +433,21 @@ private fun LayersPanel(
     }
     if (layers.isNotEmpty()) {
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            layers.forEach { layer ->
+            layers.forEachIndexed { index, layer ->
+                val label = if (layers.count { it.label == layer.label } > 1) "${index + 1} · ${layer.label}" else layer.label
                 FilterChip(selected?.id == layer.id, { workspace.activeLayer = layer.id },
-                    { Text(layer.label.take(16), maxLines = 1) })
+                    { Text(label.take(20), maxLines = 1) })
             }
         }
     }
     val layer = selected ?: return
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-        Switch(layer.visible, { workspace.layer(layer.copy(visible = it)) })
-        Text(if (layer.visible) "可见" else "隐藏", modifier = Modifier.weight(1f), color = Muted,
-            style = MaterialTheme.typography.bodySmall)
+    FlowRow(verticalArrangement = Arrangement.spacedBy(2.dp), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Switch(layer.visible, { workspace.layer(layer.copy(visible = it)) })
+            Text(if (layer.visible) "可见" else "隐藏", color = Muted, style = MaterialTheme.typography.bodySmall)
+        }
         TextButton({ setMoving(!moving) }) { Text(if (moving) "结束移动" else "拖动") }
+        TextButton({ workspace.duplicateLayer(layer) }) { Text("复制图层") }
         TextButton({ workspace.reorderLayer(layer.id, -1) }, enabled = layers.indexOf(layer) > 0) { Text("下移") }
         TextButton({ workspace.reorderLayer(layer.id, 1) }, enabled = layers.indexOf(layer) < layers.lastIndex) { Text("上移") }
         IconButton({ workspace.deleteLayer(layer.id) }) { Icon(Icons.Default.Close, "删除图层", tint = Danger) }

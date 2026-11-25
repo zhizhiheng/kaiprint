@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "id": "travel-notebook",
+  "title": "旅途手记",
+  "captions": { "TITLE": "沿途所见" },
+  "place": "CITY",
+  "dateStyle": "DOTTED",
+  "frame": { "left": 0.05, "top": 0.065, "right": 0.05, "bottom": 0.24, "color": "#F7F3E9", "collapseEmpty": true },
+  "layers": [
+    { "id": "title", "kind": "EXIF", "fields": ["TITLE"], "area": "BOTTOM", "anchor": "TOP_LEFT", "column": "LEFT_HALF", "type": "SERIF", "size": 0.052, "margin": 0.035, "color": "#25382D" },
+    { "id": "byline", "kind": "EXIF", "fields": ["AUTHOR", "LOCATION", "DATE"], "area": "BOTTOM", "anchor": "BOTTOM_LEFT", "column": "LEFT_HALF", "size": 0.022, "margin": 0.035, "color": "#49574F" },
+    { "id": "body", "kind": "BRAND", "brandStyle": "MODEL", "area": "BOTTOM", "anchor": "TOP_RIGHT", "column": "RIGHT_HALF", "size": 0.14, "margin": 0.035 },
+    { "id": "settings", "kind": "EXIF", "fields": ["FOCAL", "APERTURE", "SHUTTER", "ISO"], "area": "BOTTOM", "anchor": "BOTTOM_RIGHT", "column": "RIGHT_HALF", "type": "MONO", "size": 0.025, "margin": 0.035, "color": "#48554E" }
+  ]
+}

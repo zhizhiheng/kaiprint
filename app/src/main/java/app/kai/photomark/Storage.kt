@@ -70,8 +70,15 @@ interface PhotoMarkDao {
     @Query("SELECT * FROM PresetRow ORDER BY updatedAt DESC")
     fun observePresets(): Flow<List<PresetRow>>
 
+    @Query("SELECT * FROM PresetRow WHERE id = :id")
+    suspend fun preset(id: String): PresetRow?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertPreset(preset: PresetRow)
+
+    // Match the previously opened revision; a late save cannot re-create a deleted preset.
+    @Query("UPDATE PresetRow SET template = :template, updatedAt = :updatedAt WHERE id = :id AND template = :previous")
+    suspend fun updatePreset(id: String, previous: String, template: String, updatedAt: Long): Int
 
     @Query("DELETE FROM PresetRow WHERE id = :id")
     suspend fun deletePreset(id: String)

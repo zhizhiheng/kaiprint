@@ -11,6 +11,8 @@ const help = `KaiPrint · 光印
   kaiprint metadata edit 照片 --set iso=400 [--unset copyright] [-o 副本 | --in-place] [--dry-run | --confirm | --yes]
   kaiprint skill [--install 技能父目录] [--json]
   kaiprint-mcp --root 照片目录
+  kaiprint preset pack template.json -o 文件.kaiphoto [--assets 素材目录] [--preview 预览.jpg] [--json]
+  kaiprint preset inspect 文件.kaiphoto [--json]
   kaiprint templates [--json]
   kaiprint inspect 照片... [选项] [--json]
   kaiprint render 照片... [选项] [--dry-run | --confirm | --yes] [--json]
@@ -38,6 +40,8 @@ const help = `KaiPrint · 光印
       kaiprint render A.jpg B.jpg --out-dir prints --template frosted-gallery --yes --json`;
 const opts = {
   help: { type: "boolean", short: "h" },
+  assets: { type: "string" },
+  preview: { type: "string" },
   tag: { type: "string", multiple: true },
   unset: { type: "string", multiple: true },
   "in-place": { type: "boolean" },
@@ -84,7 +88,10 @@ try {
     json = !!v.json;
     if (v.help || (!command && !v.version)) result({ help }, help);
     else if (v.version) result({ version: pkg.version }, pkg.version);
-    else if (command === "metadata") {
+    else if (command === "preset") {
+      const { runPreset } = await import("./preset.js");
+      await runPreset(files, v, result);
+    } else if (command === "metadata") {
       const { runMetadata } = await import("./metadata-command.js");
       await runMetadata(files, v, result);
     } else if (command === "skill") {
@@ -98,7 +105,9 @@ try {
       result(data, data.directory);
     } else if (
       Object.keys(v).some((k) =>
-        ["tag", "unset", "in-place", "install"].includes(k),
+        ["tag", "unset", "in-place", "install", "assets", "preview"].includes(
+          k,
+        ),
       )
     )
       usage("该选项需要 metadata 或 skill 命令");

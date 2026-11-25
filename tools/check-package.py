@@ -22,7 +22,9 @@ def main():
         expected = {"app/src/main/assets/models/" + row[0] for row in sources}
         expected.update(p.relative_to(ROOT).as_posix() for p in (ROOT / "app/src/main/assets/brands").glob("*.svg"))
         expected.update(p.relative_to(ROOT).as_posix() for p in (ROOT / "cli").glob("*.js"))
+        expected.update(p.relative_to(ROOT).as_posix() for p in (ROOT / "examples/presets").glob("*") if p.is_file())
         expected.update(["package.json", "LICENSE", "README.md", "cli/models.json", "docs/cli.md",
+                         "formats/kaiphoto-template-v1.schema.json", "docs/preset-format.md",
                          "docs/brand-marks.md", "docs/agents.md", "server.json", "skills/kaiprint/SKILL.md", "model-marks/catalog.csv", "app/src/main/assets/places/cities.tsv"])
         with tarfile.open(tarball, "r:gz") as archive:
             files = {m.name.removeprefix("package/") for m in archive if m.isfile()}
@@ -51,6 +53,10 @@ sharp({create:{width:180,height:120,channels:3,background:"#315444"}})
         assert invoke("metadata", "test.jpg", "--tag", "Model")["photos"][0]["tags"]["IFD0:Model"] == "NIKON ZR"
         edited = invoke("metadata", "edit", "test.jpg", "--set", "iso=640", "--yes")
         assert invoke("metadata", edited["output"], "--tag", "ExifIFD:ISO")["photos"][0]["tags"]["ExifIFD:ISO"] == 640
+        examples = stage / "node_modules" / packed["name"] / "examples" / "presets"
+        package = invoke("preset", "pack", str(examples / "travel-notebook.json"), "-o", "trial.kaiphoto")
+        assert package["format"] == "kaiphoto-v1"
+        assert invoke("preset", "inspect", "trial.kaiphoto") == invoke("preset", "inspect", str(examples / "travel-notebook.kaiphoto"))
         installed = invoke("skill", "--install", str(stage / "skills"))
         assert (Path(installed["directory"]) / "SKILL.md").is_file()
         assert subprocess.check_output([str(cli), "mcp", "--version"], cwd=stage, text=True).strip() == packed["version"]

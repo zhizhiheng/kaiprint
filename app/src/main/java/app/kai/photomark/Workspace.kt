@@ -9,11 +9,13 @@ import android.util.LruCache
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.exifinterface.media.ExifInterface
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.room.withTransaction
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
@@ -22,6 +24,8 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import java.io.File
 import java.io.IOException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.util.UUID
 
 enum class Screen { LIBRARY, EDITOR, PRESETS, EXPORTS }
@@ -31,6 +35,7 @@ private data class SavedEdit(
     val photos: List<ExportInput>,
     val draft: EditDraft,
     val active: Int,
+    val savedPreset: WatermarkTemplate? = null,
 )
 
 class Workspace(application: Application) : AndroidViewModel(application) {
@@ -43,6 +48,7 @@ class Workspace(application: Application) : AndroidViewModel(application) {
     private val details = LruCache<PhotoGroup, PhotoInfo>(48)
     private val undo = ArrayDeque<EditDraft>()
     private val redo = ArrayDeque<EditDraft>()
+    private val presetWhenOpened = mutableMapOf<String, WatermarkTemplate>()
     private var device = emptyList<PhotoSource>()
     private var imported = emptyList<PhotoSource>()
     private var galleryGeneration = 0
@@ -149,14 +155,58 @@ class Workspace(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun importFiles(uris: List<Uri>) {
+    fun importFiles(uris: List<Uri>) = importForDesign(uris, Templates.gallery)
+
+    fun importForDesign(uris: List<Uri>, template: WatermarkTemplate) {
         if (uris.isEmpty()) return
-        importSources {
+        importSources(template) {
             uris.mapNotNull { uri ->
                 persist(uri)
                 runCatching { app.photos.openDocument(uri) }.getOrNull()
             }
         }
+    }
+
+    fun openSampleDesign(template: WatermarkTemplate) {
+        val origin = screen
+        val session = editing
+        viewModelScope.launch {
+            val source = capture("无法打开示例照片") { withContext(Dispatchers.IO) { studioPhoto() } } ?: return@launch
+            if (screen == origin && editing === session) begin(listOf(PhotoGroup(source)), template)
+        }
+    }
+
+    private fun studioPhoto(): PhotoSource {
+        val directory = File(app.filesDir, "studio").also { it.mkdirs() }
+        val photo = File(directory, "示例照片.jpg")
+        if (!photo.isFile) {
+            val temporary = File.createTempFile("sample-", ".jpg", directory)
+            try {
+                val bitmap = app.renderer.sample(Templates.blank)
+                try {
+                    temporary.outputStream().use { output ->
+                        if (!bitmap.compress(Bitmap.CompressFormat.JPEG, 95, output)) throw IOException("示例照片写入失败")
+                    }
+                } finally {
+                    bitmap.recycle()
+                }
+                ExifInterface(temporary).apply {
+                    setAttribute(ExifInterface.TAG_MAKE, "NIKON CORPORATION")
+                    setAttribute(ExifInterface.TAG_MODEL, "NIKON ZR")
+                    setAttribute(ExifInterface.TAG_LENS_MODEL, "NIKKOR Z 24-70mm f/4 S")
+                    setAttribute(ExifInterface.TAG_FOCAL_LENGTH, "50/1")
+                    setAttribute(ExifInterface.TAG_F_NUMBER, "4/1")
+                    setAttribute(ExifInterface.TAG_EXPOSURE_TIME, "1/125")
+                    setAttribute(ExifInterface.TAG_PHOTOGRAPHIC_SENSITIVITY, "400")
+                    setAttribute(ExifInterface.TAG_DATETIME_ORIGINAL, "2026:11:20 17:42:10")
+                    saveAttributes()
+                }
+                Files.move(temporary.toPath(), photo.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+            } finally {
+                temporary.delete()
+            }
+        }
+        return PhotoSource(Uri.fromFile(photo).toString(), photo.name, "创作示例", directory.path, mime = "image/jpeg")
     }
 
     fun importFolder(uri: Uri) {
@@ -166,11 +216,11 @@ class Workspace(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun importSources(read: () -> List<PhotoSource>) {
+    private fun importSources(template: WatermarkTemplate = Templates.gallery, read: () -> List<PhotoSource>) {
         viewModelScope.launch {
             val sources = capture("导入失败，请检查文件访问权限") { withContext(Dispatchers.IO) { read() } }
                 ?: return@launch
-            showImported(sources, "所选位置没有可导入的照片")
+            showImported(sources, "所选位置没有可导入的照片", template)
         }
     }
 
@@ -206,14 +256,14 @@ class Workspace(application: Application) : AndroidViewModel(application) {
         (saved + pending).flatMap { listOfNotNull(it.photo.uri, it.companion?.uri) }.toSet()
     }
 
-    private suspend fun showImported(sources: List<PhotoSource>, empty: String) {
+    private suspend fun showImported(sources: List<PhotoSource>, empty: String, template: WatermarkTemplate = Templates.gallery) {
         if (sources.isEmpty()) {
             message = empty
             return
         }
         imported = (sources + imported).distinctBy(PhotoSource::uri)
         val groups = withContext(Dispatchers.IO) { app.photos.groups(sources) }
-        begin(groups)
+        begin(groups, template)
         mergeGallery(galleryGeneration)
     }
 
@@ -247,11 +297,13 @@ class Workspace(application: Application) : AndroidViewModel(application) {
         clearSelection()
     }
 
-    fun begin(groups: List<PhotoGroup>) {
+    fun begin(groups: List<PhotoGroup>, template: WatermarkTemplate = Templates.gallery) {
         if (groups.isEmpty()) return
         editing = groups.distinctBy(PhotoGroup::id)
         activeIndex = 0
-        draft = EditDraft(Templates.gallery)
+        draft = EditDraft(template)
+        presetWhenOpened.clear()
+        rememberPreset(template)
         activeLayer = null
         undo.clear()
         redo.clear()
@@ -269,6 +321,7 @@ class Workspace(application: Application) : AndroidViewModel(application) {
             editing = saved.photos.map { PhotoGroup(it.photo, it.companion) }
             activeIndex = saved.active.coerceIn(0, maxOf(0, editing.lastIndex))
             draft = saved.draft.copy(template = Templates.upgradeLegacyZr(saved.draft.template))
+            saved.savedPreset?.let(::rememberPreset)
         }
         if (editing.isNotEmpty()) screen = Screen.EDITOR
     }
@@ -278,7 +331,14 @@ class Workspace(application: Application) : AndroidViewModel(application) {
         saveSession()
     }
 
+    private fun rememberPreset(template: WatermarkTemplate) {
+        if (template.id != Templates.blank.id && Templates.all.none { it.id == template.id }) {
+            presetWhenOpened[template.id] = template
+        }
+    }
+
     fun apply(template: WatermarkTemplate) {
+        rememberPreset(template)
         // Built-in templates carry no canvas ratio, so switching between them keeps the chosen post shape.
         edit(draft.copy(template = Templates.adopt(template, draft.template)))
         activeLayer = null
@@ -312,10 +372,7 @@ class Workspace(application: Application) : AndroidViewModel(application) {
     }
 
     fun addLayer(kind: LayerKind, logo: String? = null) {
-        if (draft.template.layers.size >= 24) {
-            message = "每个模板最多保存 24 个图层"
-            return
-        }
+        if (atLayerLimit()) return
         val layer = when (kind) {
             LayerKind.TEXT -> WatermarkLayer(id(), kind, "摄影师署名", type = TypeStyle.SERIF, shadow = true)
             LayerKind.EXIF -> WatermarkLayer(id(), kind,
@@ -329,6 +386,23 @@ class Workspace(application: Application) : AndroidViewModel(application) {
         }
         edit(draft.copy(template = draft.template.copy(layers = draft.template.layers + layer)))
         activeLayer = layer.id
+    }
+
+    fun duplicateLayer(source: WatermarkLayer) {
+        if (atLayerLimit()) return
+        val layers = draft.template.layers.toMutableList()
+        val index = layers.indexOfFirst { it.id == source.id }
+        if (index < 0) return
+        val copy = layers[index].copy(id = id())
+        layers.add(index + 1, copy)
+        edit(draft.copy(template = draft.template.copy(layers = layers)))
+        activeLayer = copy.id
+    }
+
+    private fun atLayerLimit(): Boolean {
+        if (draft.template.layers.size < 24) return false
+        message = "每个模板最多保存 24 个图层"
+        return true
     }
 
     fun deleteLayer(id: String) {
@@ -433,7 +507,7 @@ class Workspace(application: Application) : AndroidViewModel(application) {
     )
 
     private fun saveSession() {
-        val session = SavedEdit(editing.map(::input), draft, activeIndex)
+        val session = SavedEdit(editing.map(::input), draft, activeIndex, presetWhenOpened[draft.template.id])
         val generation = ++draftStoreGeneration
         viewModelScope.launch {
             val encoded = withContext(Dispatchers.Default) { storageJson.encodeToString(session) }
@@ -513,22 +587,38 @@ class Workspace(application: Application) : AndroidViewModel(application) {
     fun importPreset(uri: Uri) {
         viewModelScope.launch {
             capture("无法导入此预设包") {
-                val imported = withContext(Dispatchers.IO) { PresetArchive(app).read(uri) }
+                val imported = withContext(Dispatchers.IO) {
+                    val archive = PresetArchive(app)
+                    val preset = archive.read(uri)
+                    // Once the files are installed, finish saving their owner or roll them back.
+                    withContext(NonCancellable) {
+                        try {
+                            val template = preset.template
+                            dao.upsertPreset(PresetRow(template.id, template.title, storageJson.encodeToString(template), System.currentTimeMillis()))
+                        } catch (error: Exception) {
+                            archive.discard(preset)
+                            throw error
+                        }
+                    }
+                    preset
+                }
                 val template = imported.template
-                dao.upsertPreset(PresetRow(template.id, template.title, storageJson.encodeToString(template), System.currentTimeMillis()))
                 val missing = listOfNotNull(
+                    imported.conversion,
                     "${imported.missingFonts} 个字体改用默认字体".takeIf { imported.missingFonts > 0 },
                     "${imported.missingLogos} 个 Logo 缺失".takeIf { imported.missingLogos > 0 },
                 )
                 message = "已导入预设「${template.title}」" + if (missing.isEmpty()) "" else "，" + missing.joinToString("，")
+                screen = Screen.PRESETS
             }
         }
     }
 
-    fun exportPreset(preset: PresetRow, uri: Uri) {
+    fun exportPreset(presetId: String, uri: Uri) {
         viewModelScope.launch {
             capture("无法保存预设包") {
                 withContext(Dispatchers.IO) {
+                    val preset = dao.preset(presetId) ?: throw PresetFormatException("这个预设已被删除")
                     val template = storageJson.decodeFromString<WatermarkTemplate>(preset.template)
                     val preview = runCatching { app.renderer.sample(template) }.getOrNull()
                     try {
@@ -545,28 +635,46 @@ class Workspace(application: Application) : AndroidViewModel(application) {
     fun savePreset(name: String) {
         val title = name.trim().take(60)
         if (title.isBlank()) return
-        val template = draft.template.copy(id = id(), title = title)
+        val source = draft.template
+        val photos = editing
+        val template = source.copy(id = id(), title = title)
         viewModelScope.launch {
             capture("保存预设失败") {
                 dao.upsertPreset(PresetRow(template.id, title, storageJson.encodeToString(template), System.currentTimeMillis()))
+                if (editing === photos && draft.template === source) {
+                    presetWhenOpened[template.id] = template
+                    draft = draft.copy(template = template)
+                    saveSession()
+                }
                 message = "已保存预设「$title」"
+            }
+        }
+    }
+
+    fun updatePreset(row: PresetRow) {
+        val template = draft.template
+        if (row.id != template.id || Templates.all.any { it.id == row.id } || row.id == Templates.blank.id) return
+        val opened = presetWhenOpened[row.id]
+        val photos = editing
+        viewModelScope.launch {
+            capture("更新预设失败") {
+                val latest = storageJson.decodeFromString<WatermarkTemplate>(row.template)
+                if (opened != latest || dao.updatePreset(row.id, row.template,
+                        storageJson.encodeToString(template), System.currentTimeMillis()) == 0) {
+                    message = "预设已更改或删除，可以把当前设计另存为新预设"
+                } else {
+                    if (editing === photos && presetWhenOpened[row.id] == opened) {
+                        presetWhenOpened[row.id] = template
+                        saveSession()
+                    }
+                    message = "已更新预设「${row.name}」"
+                }
             }
         }
     }
 
     fun deletePreset(id: String) {
         viewModelScope.launch { capture("无法删除预设") { dao.deletePreset(id) } }
-    }
-
-    fun loadPreset(preset: PresetRow) {
-        val template = runCatching { storageJson.decodeFromString<WatermarkTemplate>(preset.template) }.getOrNull()
-        if (template == null) {
-            message = "此预设暂时无法打开"
-        } else if (editing.isNotEmpty()) {
-            apply(template)
-        } else {
-            message = "选照片后可使用「${preset.name}」"
-        }
     }
 
     suspend fun thumbnail(group: PhotoGroup): Bitmap? = withContext(Dispatchers.IO) {
@@ -664,6 +772,9 @@ class Workspace(application: Application) : AndroidViewModel(application) {
             action()
         } catch (error: CancellationException) {
             throw error
+        } catch (error: PresetFormatException) {
+            this.message = error.message ?: message
+            null
         } catch (_: Exception) {
             this.message = message
             null
