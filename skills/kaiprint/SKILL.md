@@ -2,7 +2,7 @@
 name: kaiprint
 description: Read a photograph’s original EXIF, XMP and camera metadata, edit embedded tags, render camera-logo watermarks, import desktop artwork, or save and share editable KaiPhoto templates and projects. Use for local photography workflows including Nikon NEF files, PSD/ORA/KRA/TIFF artwork and batch exports.
 metadata:
-  version: "0.0.3"
+  version: "0.0.4"
 ---
 
 # KaiPrint 摄影工作流

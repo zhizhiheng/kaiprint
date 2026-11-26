@@ -7,12 +7,12 @@
     "url": "https://github.com/zhizhiheng/kaiprint",
     "source": "github"
   },
-  "version": "0.0.3",
+  "version": "0.0.4",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "@kkellyoffical/kaiprint",
-      "version": "0.0.3",
+      "version": "0.0.4",
       "transport": {
         "type": "stdio"
       },

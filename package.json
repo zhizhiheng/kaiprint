@@ -1,6 +1,6 @@
 {
   "name": "@kkellyoffical/kaiprint",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "Local photography watermarks and original metadata editing for CLI, MCP and agent skills",
   "author": "kkellyoffical",
   "license": "MIT",

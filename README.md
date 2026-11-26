@@ -4,7 +4,7 @@
 
 光印提供 Android 摄影水印工作台和可供 agent 调用的命令行工具。可在同一张照片上叠加署名、Logo、相机参数和边框，保存排版后批量导出。照片读取、渲染和预设管理均在设备上完成。Android 成片独立保存到 `Pictures/光印`。
 
-当前正式版为 **0.0.3**。发布页提供签名 Android 安装包、离线 Web 工作台，以及 CLI、MCP 和 skill。[0.0.3 正式版](https://github.com/zhizhiheng/kaiprint/releases/tag/v0.0.3)
+当前正式版为 **0.0.3**，`main` 上的后续开发使用 **0.0.4**。发布页提供签名 Android 安装包、离线 Web 工作台，以及 CLI、MCP 和 skill。[0.0.3 正式版](https://github.com/zhizhiheng/kaiprint/releases/tag/v0.0.3)
 
 ## 0.0.3的个人库和桌面导入
 
