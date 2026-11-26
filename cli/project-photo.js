@@ -8,6 +8,10 @@ import exifr from "exifr";
 import sharp from "sharp";
 import projectSchema from "../formats/kaiphoto-project-v2.schema.json" with { type: "json" };
 
+// libvips caches open image loaders. Windows must release the staged original
+// before the package writer removes its temporary directory.
+if (process.platform === "win32") sharp.cache(false);
+
 export const maxPhotoBytes =
   projectSchema.properties.photo.properties.bytes.maximum;
 const mediaPaths = new Map([

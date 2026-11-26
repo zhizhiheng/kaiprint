@@ -1,6 +1,6 @@
 # KaiPhoto 模板与作品格式
 
-.kaiphoto 有两种用途。分享通用排版时选**仅模板**，接收方用自己的照片继续设计。交接一张已经排好的照片时选**照片与模板**，接收方能从相同的原片、图层和手填参数继续改。若只供观看，从编辑器导出 JPEG 成片即可。以下能力对应 0.0.3 开发版。[下载「旅途手记」](../examples/presets/travel-notebook.kaiphoto?raw=true) · [同一模板的 JSON](../examples/presets/travel-notebook.json) · [CLI 用法](cli.md#在电脑上制作-kaiphoto)
+.kaiphoto 有两种用途。分享通用排版时选**仅模板**，接收方用自己的照片继续设计。交接一张已经排好的照片时选**照片与模板**，接收方能从相同的原片、图层和手填参数继续改。若只供观看，从编辑器导出 JPEG 成片即可。以下能力对应 0.0.3。[下载「旅途手记」](../examples/presets/travel-notebook.kaiphoto?raw=true) · [同一模板的 JSON](../examples/presets/travel-notebook.json) · [CLI 用法](cli.md#在电脑上制作-kaiphoto)
 
 ## v1 通用模板
 

@@ -12,7 +12,7 @@ CLI 和 MCP 默认使用当前操作系统用户的个人目录。macOS、Linux 
 
 ## 常用操作
 
-以下示例针对 0.0.3 开发版。从源码运行时，将命令开头的 `kaiprint` 换为 `node cli/kaiprint.js`。
+以下示例针对 0.0.3。从源码运行时，将命令开头的 `kaiprint` 换为 `node cli/kaiprint.js`。
 
 ```sh
 kaiprint config show --json

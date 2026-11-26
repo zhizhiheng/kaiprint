@@ -3,16 +3,16 @@
 需要 Node.js 22.12 或更新版本。安装后，读取照片、识别机型、查询城市和渲染均在本机完成。首次安装需要联网下载依赖和适合当前系统的图像库。中文排版使用系统字体，Linux 可安装 Noto Sans CJK。
 
 ```sh
-npm install --global @kkellyoffical/kaiprint@0.0.2
+npm install --global @kkellyoffical/kaiprint@0.0.3
 kaiprint --version
 kaiprint templates
 ```
 
-完整的 0.0.2 通过个人作用域包发布。原先的无作用域 `kaiprint@0.0.2` 是基础水印版，npm 的同名同版本内容已固定。如全局安装提示 `kaiprint` 命令已存在，可继续保留旧安装，并用 `npx --yes --package=@kkellyoffical/kaiprint@0.0.2 -- kaiprint` 运行新版。元数据工具随包分发 ExifTool，Linux 和 macOS 需要可用的 Perl，Windows 使用随包的可执行文件。[npm 发布规则](https://docs.npmjs.com/cli/v11/commands/npm-publish/)
+完整的 0.0.3 通过个人作用域包发布。原先的无作用域 `kaiprint@0.0.2` 是基础水印版，npm 的同名同版本内容已固定。如全局安装提示 `kaiprint` 命令已存在，可继续保留旧安装，并用 `npx --yes --package=@kkellyoffical/kaiprint@0.0.3 -- kaiprint` 运行新版。元数据工具随包分发 ExifTool，Linux 和 macOS 需要可用的 Perl，Windows 使用随包的可执行文件。[npm 发布规则](https://docs.npmjs.com/cli/v11/commands/npm-publish/)
 
 ## 在电脑上制作 KaiPhoto
 
-`preset` 命令属于 **0.0.3 开发版**。在开发版仓库根目录安装依赖，然后用仓库里的 CLI 打包。下面的「旅途手记」有标题、署名与地点、机型标志、拍摄参数四个图层。可以先改 JSON 里的 `title` 和 `captions.TITLE` 再打包。[示例源文件](../examples/presets/travel-notebook.json) · [可导入的成品](../examples/presets/travel-notebook.kaiphoto)
+`preset` 命令属于 **0.0.3**。在仓库根目录安装依赖，然后用仓库里的 CLI 打包。下面的「旅途手记」有标题、署名与地点、机型标志、拍摄参数四个图层。可以先改 JSON 里的 `title` 和 `captions.TITLE` 再打包。[示例源文件](../examples/presets/travel-notebook.json) · [可导入的成品](../examples/presets/travel-notebook.kaiphoto)
 
 ```sh
 npm ci
@@ -24,7 +24,7 @@ node cli/kaiprint.js preset inspect my-travel.kaiphoto --json
 
 `inspect` 接受 `.kaiphoto` 和旧版光印 ZIP。加 `--json` 可取到 `format`（`kaiphoto-v2`、`kaiphoto-v1` 或 `legacy-zip`）、`title`、`id`、`layerCount`、`assets`、`missingAssets` 和 `hasPreview`。例如代理可以先检查 `missingAssets`，再把完整的包交给摄影师。
 
-要用这份文件出图，可在 Android 开发版的「预设 → 导入模板」选中它，或在 Web 工作台中打开文件，再选照片套用。CLI 和 MCP 的 `render` 目前接受下文的三个内置排版标识。
+要用这份文件出图，可在 Android 版的「预设 → 导入模板」选中它，或在 Web 工作台中打开文件，再选照片套用。CLI 和 MCP 的 `render` 目前接受下文的三个内置排版标识。
 
 ### 把原始照片和排版一起交接
 
